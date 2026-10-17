@@ -152,7 +152,8 @@ class _KarenOverlayState extends State<KarenOverlay> {
             builder: (context, _) {
               final step = _karen.currentStep;
               final line = _karen.line;
-              final visible = _karen.visible && (step != null || line != null);
+              final visible =
+                  _karen.visible && !_karen.suppressed && (step != null || line != null);
               _rect = _karen.inTour ? KarenTargets.rectOf(step?.target) : null;
 
               // Karen vive encima del navegador, fuera de cualquier Scaffold:

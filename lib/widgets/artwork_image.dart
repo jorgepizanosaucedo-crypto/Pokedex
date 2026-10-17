@@ -20,6 +20,10 @@ class ArtworkImage extends StatelessWidget {
   final bool thumbUnderlay;
   final Color? placeholderColor;
 
+  /// Arte propio de una forma de aspecto. Debajo se sigue viendo la
+  /// miniatura normal del [id] mientras llega.
+  final String? url;
+
   const ArtworkImage({
     super.key,
     required this.id,
@@ -28,6 +32,7 @@ class ArtworkImage extends StatelessWidget {
     this.tier = ArtTier.thumb,
     this.thumbUnderlay = false,
     this.placeholderColor,
+    this.url,
   });
 
   @override
@@ -42,7 +47,7 @@ class ArtworkImage extends StatelessWidget {
       return SizedBox.square(
         dimension: size,
         child: Image(
-          image: Artwork.provider(id, shiny: shiny, tier: ArtTier.full),
+          image: Artwork.provider(id, shiny: shiny, tier: ArtTier.full, url: url),
           width: size,
           height: size,
           fit: BoxFit.contain,
@@ -63,7 +68,7 @@ class ArtworkImage extends StatelessWidget {
     return SizedBox.square(
       dimension: size,
       child: Image(
-        image: Artwork.provider(id, shiny: shiny, tier: tier),
+        image: Artwork.provider(id, shiny: shiny, tier: tier, url: url),
         width: size,
         height: size,
         fit: BoxFit.contain,

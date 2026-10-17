@@ -79,7 +79,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     _ready = Future.wait([FavoritesStore.instance.load(), ProfileStore.instance.load()]);
     // Se adelanta la red: la lista y los tipos empiezan a llegar mientras
     // corre la animación, así la Pokédex aparece ya cargada.
-    PokeApiService.instance.getPokemonList(limit: 1025).then((_) {}, onError: (Object _) {});
+    PokeApiService.instance.getPokemonList().then((_) {}, onError: (Object _) {});
     TypeIndex.instance.load();
     if (kIsWeb) {
       _c.animateTo(_landed).then((_) {

@@ -24,6 +24,7 @@ Future<void> main() async {
     ..maximumSizeBytes = 200 << 20;
 
   MusicService.instance.init();
+  SoundService.instance.init();
   // En web los efectos se bajan y decodifican ya, para que el primero suene
   // a tiempo (el de la apertura incluido).
   SoundService.instance.preload();

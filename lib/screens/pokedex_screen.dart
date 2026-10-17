@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
+import '../data/dex_data.dart';
 import '../models/pokemon.dart';
 import '../services/artwork.dart';
 import '../services/favorites_store.dart';
@@ -34,8 +35,66 @@ class PokedexScreen extends StatefulWidget {
   State<PokedexScreen> createState() => _PokedexScreenState();
 }
 
+/// Número de tipos: todos, sólo un tipo (puros) o dos.
+enum TypeCount {
+  any('Todos'),
+  mono('Monotipo (puros)'),
+  dual('Doble tipo');
+
+  final String label;
+  const TypeCount(this.label);
+}
+
+enum DexSort {
+  number('Número'),
+  numberDesc('Número, al revés'),
+  name('Nombre A-Z'),
+  nameDesc('Nombre Z-A');
+
+  final String label;
+  const DexSort(this.label);
+}
+
+/// Los filtros de la hoja "Filtros" (el tipo y el equipo van aparte).
+class DexFilters {
+  final int? generation;
+  final DexCategory? category;
+  final TypeCount typeCount;
+  final DexSort sort;
+
+  const DexFilters({
+    this.generation,
+    this.category,
+    this.typeCount = TypeCount.any,
+    this.sort = DexSort.number,
+  });
+
+  DexFilters copyWith({
+    int? Function()? generation,
+    DexCategory? Function()? category,
+    TypeCount? typeCount,
+    DexSort? sort,
+  }) => DexFilters(
+    generation: generation == null ? this.generation : generation(),
+    category: category == null ? this.category : category(),
+    typeCount: typeCount ?? this.typeCount,
+    sort: sort ?? this.sort,
+  );
+
+  int get activeCount =>
+      (generation != null ? 1 : 0) +
+      (category != null ? 1 : 0) +
+      (typeCount != TypeCount.any ? 1 : 0) +
+      (sort != DexSort.number ? 1 : 0);
+}
+
+/// Nombre de una tarjeta: el de la especie, o "Mega Charizard X" en una variante.
+String itemLabel(PokemonListItem item) => item.isForm && item.speciesName != null
+    ? formDisplayName(item.name, item.speciesName!)
+    : displayName(item.name);
+
 class _PokedexScreenState extends State<PokedexScreen> {
-  static const _dexSize = 1025;
+  static const _dexSize = PokeApiService.dexSize;
 
   final TextEditingController _search = TextEditingController();
   final ScrollController _scroll = ScrollController();
@@ -47,6 +106,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
   Set<int>? _typeMembers;
   bool _loadingType = false;
   bool _onlyFavorites = false;
+  DexFilters _filters = const DexFilters();
 
   /// Hasta cuándo las tarjetas entran animadas: sólo la primera pantalla, una
   /// vez. Antes cada tarjeta esperaba su turno también al desplazarse.
@@ -100,7 +160,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
   }
 
   Future<List<PokemonListItem>> _load() async {
-    final list = await PokeApiService.instance.getPokemonList(limit: _dexSize);
+    final list = await PokeApiService.instance.getPokemonList();
     _all = list;
     _introUntil = DateTime.now().add(const Duration(milliseconds: 700));
     _errorAnnounced = false;
@@ -153,18 +213,112 @@ class _PokedexScreenState extends State<PokedexScreen> {
     );
   }
 
-  List<PokemonListItem> get _visible {
+  List<PokemonListItem> get _visible => _filtered(_filters);
+
+  /// La lista con la búsqueda y todos los filtros aplicados.
+  ///
+  /// La hoja de filtros también la usa para decir cuántos saldrían antes de
+  /// cerrarla.
+  List<PokemonListItem> _filtered(DexFilters f) {
     final q = _query.trim().toLowerCase();
-    // "25", "025" y "#025" encuentran a Pikachu.
+    // "25", "025" y "#025" encuentran a Pikachu, y sale el primero.
     final number = int.tryParse(q.replaceAll('#', ''));
     final favorites = FavoritesStore.instance;
-    return _all.where((item) {
+    final category = f.category;
+    final forms = PokeApiService.instance.forms;
+
+    // Las categorías de forma listan variantes; buscar por nombre también
+    // las incluye ("raichu" encuentra a Raichu y a Raichu de Alola).
+    final Iterable<PokemonListItem> source;
+    if (category != null && category.isForm) {
+      source = forms.where((i) => categoryOfForm(i.name) == category);
+    } else if (category == null && q.isNotEmpty) {
+      source = [..._all, ...forms];
+    } else {
+      source = _all;
+    }
+    final speciesSet = category == null || category.isForm ? null : kCategoryIds[category];
+
+    final list = source.where((item) {
       if (_onlyFavorites && !favorites.contains(item.id)) return false;
       if (_typeMembers != null && !_typeMembers!.contains(item.id)) return false;
+      if (speciesSet != null && !speciesSet.contains(item.dexId)) return false;
+      if (f.generation != null && generationOf(item.dexId)?.number != f.generation) return false;
+      if (f.typeCount != TypeCount.any) {
+        final count = TypeIndex.instance.typesOf(item.id)?.length;
+        if (count != null && count != (f.typeCount == TypeCount.mono ? 1 : 2)) return false;
+      }
       if (q.isEmpty) return true;
-      if (number != null) return item.id.toString().contains(number.toString());
-      return item.name.contains(q) || displayName(item.name).toLowerCase().contains(q);
+      if (number != null) {
+        // Por número: el que empieza así (25 → 25, 250…), no el que lo
+        // contiene en medio (125, 225).
+        return item.dexId.toString().startsWith(number.toString());
+      }
+      return item.name.contains(q) || itemLabel(item).toLowerCase().contains(q);
     }).toList();
+
+    int byNumber(PokemonListItem a, PokemonListItem b) {
+      final c = a.dexId.compareTo(b.dexId);
+      return c != 0 ? c : a.id.compareTo(b.id);
+    }
+
+    switch (f.sort) {
+      case DexSort.number:
+        list.sort(byNumber);
+      case DexSort.numberDesc:
+        list.sort((a, b) => byNumber(b, a));
+      case DexSort.name:
+        list.sort((a, b) => itemLabel(a).compareTo(itemLabel(b)));
+      case DexSort.nameDesc:
+        list.sort((a, b) => itemLabel(b).compareTo(itemLabel(a)));
+    }
+    if (number != null) {
+      // El número exacto siempre arriba, luego sus formas, luego el resto.
+      int rank(PokemonListItem i) => i.dexId == number ? (i.isForm ? 1 : 0) : 2;
+      final ranked = list.indexed.toList()
+        ..sort((a, b) {
+          final r = rank(a.$2).compareTo(rank(b.$2));
+          return r != 0 ? r : a.$1.compareTo(b.$1);
+        });
+      return [for (final (_, item) in ranked) item];
+    }
+    return list;
+  }
+
+  void _setFilters(DexFilters next) {
+    final before = _filters;
+    setState(() => _filters = next);
+    _toTop();
+    final karen = KarenController.instance;
+    if (next.generation != null && next.generation != before.generation) {
+      karen.onGeneration(next.generation!);
+    } else if (next.category != null && next.category != before.category) {
+      final sample = _filtered(next).take(3).map((i) => i.id).toList();
+      karen.onCategory(next.category!.name, sample);
+    } else if (next.typeCount != before.typeCount && next.typeCount != TypeCount.any) {
+      karen.onTypeCount(dual: next.typeCount == TypeCount.dual);
+    }
+  }
+
+  /// Al cambiar la búsqueda o los filtros, la lista vuelve arriba: antes,
+  /// con la lista desplazada, el Pokémon buscado quedaba fuera de la vista.
+  void _toTop() {
+    if (_scroll.hasClients && _scroll.offset > 0) _scroll.jumpTo(0);
+  }
+
+  void _openFilters() {
+    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      constraints: const BoxConstraints(maxWidth: 640),
+      builder: (_) => _FilterSheet(
+        initial: _filters,
+        onChanged: _setFilters,
+        countFor: (f) => _filtered(f).length,
+      ),
+    );
   }
 
   void _open(List<PokemonListItem> list, int index) {
@@ -192,7 +346,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
     SoundService.instance.play(Sfx.swipe, volume: 0.5);
     HapticFeedback.mediumImpact();
     final index = math.Random().nextInt(list.length);
-    KarenController.instance.onRandom(list[index].id, displayName(list[index].name));
+    KarenController.instance.onRandom(list[index].id, itemLabel(list[index]));
     _open(list, index);
   }
 
@@ -257,6 +411,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
 
   Widget _buildHeader(AsyncSnapshot<List<PokemonListItem>> snap) {
     final count = snap.hasData ? _visible.length : 0;
+    final chips = _activeChips();
 
     return SliverAppBar(
       pinned: true,
@@ -373,7 +528,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
         ],
       ),
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(106),
+        preferredSize: Size.fromHeight(chips.isEmpty ? 106 : 146),
         child: Container(
           color: AppColors.background,
           padding: const EdgeInsets.only(top: 10, bottom: 6),
@@ -382,11 +537,28 @@ class _PokedexScreenState extends State<PokedexScreen> {
               ContentWidth(
                 maxWidth: kGridMaxWidth,
                 child: Padding(
-                  key: KarenTargets.key('search'),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: _SearchField(
-                    controller: _search,
-                    onChanged: (v) => setState(() => _query = v),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: KeyedSubtree(
+                          key: KarenTargets.key('search'),
+                          child: _SearchField(
+                            controller: _search,
+                            onChanged: (v) {
+                              setState(() => _query = v);
+                              _toTop();
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _FilterButton(
+                        key: KarenTargets.key('filters'),
+                        active: _filters.activeCount,
+                        onPressed: _openFilters,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -398,11 +570,55 @@ class _PokedexScreenState extends State<PokedexScreen> {
                   child: _TypeFilterBar(selected: _type, onSelected: _selectType),
                 ),
               ),
+              if (chips.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                ContentWidth(
+                  maxWidth: kGridMaxWidth,
+                  child: SizedBox(
+                    height: 34,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: chips.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 6),
+                      itemBuilder: (_, i) => chips[i],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// Filtros activos, cada uno con su cruz para quitarlo.
+  List<Widget> _activeChips() {
+    final f = _filters;
+    final gen = f.generation == null ? null : kGenerations[f.generation! - 1];
+    return [
+      if (gen != null)
+        _ActiveChip(
+          label: gen.label,
+          onRemove: () => _setFilters(f.copyWith(generation: () => null)),
+        ),
+      if (f.category != null)
+        _ActiveChip(
+          label: f.category!.label,
+          onRemove: () => _setFilters(f.copyWith(category: () => null)),
+        ),
+      if (f.typeCount != TypeCount.any)
+        _ActiveChip(
+          label: f.typeCount.label,
+          onRemove: () => _setFilters(f.copyWith(typeCount: TypeCount.any)),
+        ),
+      if (f.sort != DexSort.number)
+        _ActiveChip(
+          label: 'Orden: ${f.sort.label}',
+          onRemove: () => _setFilters(f.copyWith(sort: DexSort.number)),
+        ),
+    ];
   }
 
   /// Centra la cuadrícula en pantallas anchas en lugar de estirarla. Queda
@@ -436,7 +652,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
     if (list.isEmpty) {
       // Karen sólo opina si la lista quedó vacía por una búsqueda o un filtro,
       // no cuando el equipo todavía está sin estrenar; y una vez por búsqueda.
-      final key = '${_query.trim()}|$_type';
+      final key = '${_query.trim()}|$_type|${_filters.generation}|${_filters.category}|${_filters.typeCount}';
       if (!_onlyFavorites && _lastEmpty != key) {
         _lastEmpty = key;
         WidgetsBinding.instance.addPostFrameCallback((_) => KarenController.instance.onNoResults());
@@ -446,11 +662,22 @@ class _PokedexScreenState extends State<PokedexScreen> {
         child: _EmptyState(
           onlyFavorites: _onlyFavorites,
           teamIsEmpty: FavoritesStore.instance.count == 0,
+          onClear: _filters.activeCount > 0 || _type != null || _query.isNotEmpty
+              ? () {
+                  _search.clear();
+                  setState(() {
+                    _query = '';
+                    _filters = const DexFilters();
+                  });
+                  _selectType(null);
+                }
+              : null,
         ),
       );
     }
     final animateUntil = _introUntil;
-    final showAnchor = !_onlyFavorites && _type == null && _query.trim().isEmpty;
+    final showAnchor =
+        !_onlyFavorites && _type == null && _query.trim().isEmpty && _filters.activeCount == 0;
     return SliverPadding(
       padding: _gridPadding(context),
       sliver: SliverGrid(
@@ -763,8 +990,9 @@ class _FadeInUpState extends State<_FadeInUp> with SingleTickerProviderStateMixi
 class _EmptyState extends StatelessWidget {
   final bool onlyFavorites;
   final bool teamIsEmpty;
+  final VoidCallback? onClear;
 
-  const _EmptyState({required this.onlyFavorites, required this.teamIsEmpty});
+  const _EmptyState({required this.onlyFavorites, required this.teamIsEmpty, this.onClear});
 
   @override
   Widget build(BuildContext context) {
@@ -795,6 +1023,14 @@ class _EmptyState extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppColors.muted, fontSize: 13.5, height: 1.5),
           ),
+          if (onClear != null) ...[
+            const SizedBox(height: 18),
+            OutlinedButton.icon(
+              onPressed: onClear,
+              icon: const Icon(Icons.filter_alt_off_rounded, size: 18),
+              label: const Text('Quitar búsqueda y filtros'),
+            ),
+          ],
         ],
       ),
     );
@@ -836,5 +1072,320 @@ class _ErrorState extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Botón de la hoja de filtros, junto al buscador. Lleva la cuenta de los
+/// filtros activos.
+class _FilterButton extends StatelessWidget {
+  final int active;
+  final VoidCallback onPressed;
+
+  const _FilterButton({super.key, required this.active, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final on = active > 0;
+    return Tooltip(
+      message: 'Filtros: generación, categoría, monotipo y orden',
+      child: Material(
+        color: on ? AppColors.ink : AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onPressed,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: on ? AppColors.ink : AppColors.line),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.tune_rounded, size: 19, color: on ? Colors.white : AppColors.ink),
+                const SizedBox(width: 6),
+                Text(
+                  on ? 'Filtros · $active' : 'Filtros',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: on ? Colors.white : AppColors.ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onRemove;
+
+  const _ActiveChip({required this.label, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onRemove,
+      child: Container(
+        padding: const EdgeInsets.only(left: 11, right: 6),
+        decoration: BoxDecoration(
+          color: AppColors.ink.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 4),
+            const Icon(Icons.close_rounded, size: 15, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Hoja de filtros: generación, número de tipos, categoría y orden. Los
+/// cambios se aplican al momento y el botón dice cuántos quedan.
+class _FilterSheet extends StatefulWidget {
+  final DexFilters initial;
+  final ValueChanged<DexFilters> onChanged;
+  final int Function(DexFilters) countFor;
+
+  const _FilterSheet({required this.initial, required this.onChanged, required this.countFor});
+
+  @override
+  State<_FilterSheet> createState() => _FilterSheetState();
+}
+
+class _FilterSheetState extends State<_FilterSheet> {
+  late DexFilters _f = widget.initial;
+
+  void _set(DexFilters next) {
+    SoundService.instance.play(Sfx.tap, volume: 0.3);
+    setState(() => _f = next);
+    widget.onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.countFor(_f);
+    final height = MediaQuery.sizeOf(context).height;
+    return Container(
+      constraints: BoxConstraints(maxHeight: height * 0.86),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.ink.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
+              child: Text(
+                'Filtros',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                children: [
+                  const _SheetTitle('Generación'),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _Choice(
+                        label: 'Todas',
+                        selected: _f.generation == null,
+                        onTap: () => _set(_f.copyWith(generation: () => null)),
+                      ),
+                      for (final g in kGenerations)
+                        _Choice(
+                          label: g.label,
+                          selected: _f.generation == g.number,
+                          onTap: () => _set(
+                            _f.copyWith(generation: () => _f.generation == g.number ? null : g.number),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const _SheetTitle('Tipos'),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final t in TypeCount.values)
+                        _Choice(
+                          label: t.label,
+                          selected: _f.typeCount == t,
+                          onTap: () => _set(_f.copyWith(typeCount: t)),
+                        ),
+                    ],
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Combínalo con un tipo de la barra: Fuego + Monotipo son los de fuego puro.',
+                      style: TextStyle(fontSize: 11.5, color: AppColors.muted, height: 1.4),
+                    ),
+                  ),
+                  const _SheetTitle('Categoría'),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _Choice(
+                        label: 'Todas',
+                        selected: _f.category == null,
+                        onTap: () => _set(_f.copyWith(category: () => null)),
+                      ),
+                      for (final c in DexCategory.values)
+                        _Choice(
+                          label: c.label,
+                          tooltip: c.hint,
+                          icon: c.isForm ? Icons.auto_awesome_motion_rounded : null,
+                          selected: _f.category == c,
+                          onTap: () =>
+                              _set(_f.copyWith(category: () => _f.category == c ? null : c)),
+                        ),
+                    ],
+                  ),
+                  const _SheetTitle('Ordenar por'),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final o in DexSort.values)
+                        _Choice(
+                          label: o.label,
+                          selected: _f.sort == o,
+                          onTap: () => _set(_f.copyWith(sort: o)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: _f.activeCount == 0 ? null : () => _set(const DexFilters()),
+                    child: const Text('Limpiar'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.pokeRed,
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                    ),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(
+                      'Ver $count Pokémon',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetTitle extends StatelessWidget {
+  final String text;
+
+  const _SheetTitle(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 16, bottom: 8),
+    child: Text(
+      text.toUpperCase(),
+      style: const TextStyle(
+        fontSize: 10.5,
+        fontWeight: FontWeight.w700,
+        color: AppColors.muted,
+        letterSpacing: 1.2,
+      ),
+    ),
+  );
+}
+
+class _Choice extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final String? tooltip;
+  final IconData? icon;
+
+  const _Choice({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.tooltip,
+    this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.ink : AppColors.background,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: selected ? AppColors.ink : AppColors.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14, color: selected ? Colors.white : AppColors.muted),
+              const SizedBox(width: 5),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : AppColors.ink,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
   }
 }

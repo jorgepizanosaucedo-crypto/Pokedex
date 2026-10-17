@@ -135,6 +135,22 @@ class KarenController extends ChangeNotifier {
   int _tourIndex = 0;
   VoidCallback? _onTourDone;
 
+  /// Consejos de siempre y los de las funciones nuevas, en la misma baraja.
+  static final List<KarenStep> _allTips = [..._tips, ..._newFeatureTips];
+
+  /// Mientras Karen está dentro del combate no aparece encima de todo.
+  int _suppressed = 0;
+  bool get suppressed => _suppressed > 0;
+
+  void suppress(bool value) {
+    _suppressed = (_suppressed + (value ? 1 : -1)).clamp(0, 99);
+    if (value) {
+      _autoHide?.cancel();
+      _visible = false;
+    }
+    notifyListeners();
+  }
+
   KarenLine? get line => _line;
   bool get enabled => _enabled;
   bool get visible => _visible;
@@ -161,12 +177,13 @@ class KarenController extends ChangeNotifier {
   void startIdleWatch() {
     _idleTimer?.cancel();
     _idleTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!_enabled || _visible || inTour || !ProfileStore.instance.isRegistered) return;
+      if (!_enabled || _visible || inTour || suppressed) return;
+      if (!ProfileStore.instance.isRegistered) return;
       final now = DateTime.now();
       if (now.difference(_lastInput) < _idleAfter) return;
       if (now.difference(_lastIdleTip) < _idleEvery) return;
       _lastIdleTip = now;
-      _say(_pick('tips', _tips));
+      _say(_pick('tips', _allTips));
     });
   }
 
@@ -196,7 +213,7 @@ class KarenController extends ChangeNotifier {
 
   /// Dice una frase. Devuelve `false` si tocaba callarse.
   bool _say(KarenStep step, {bool force = false, Duration? hold}) {
-    if (!_enabled) return false;
+    if (!_enabled || suppressed) return false;
     if (inTour) return false;
     final now = DateTime.now();
     if (!force && now.difference(_lastSpoke) < _gap) return false;
@@ -376,12 +393,66 @@ class KarenController extends ChangeNotifier {
     return _say(_pick('swipe', _swipeLines));
   }
 
-  /// La primera vez que abre las pestañas de estadísticas o evolución.
+  /// La primera vez que abre cada pestaña de la ficha.
   bool onTab(int index) => switch (index) {
     1 => _once('tab-stats', _pick('tab-stats', _statsTabLines)),
     2 => _once('tab-evolution', _pick('tab-evolution', _evolutionTabLines)),
+    3 => _once('tab-moves', _pick('tab-moves', _movesTabLines)),
     _ => false,
   };
+
+  /// Al filtrar por generación.
+  bool onGeneration(int generation) {
+    final line = _generationLines[generation];
+    return line == null ? false : _say(line, force: true);
+  }
+
+  /// Al filtrar por categoría ([key] = nombre del `DexCategory`).
+  bool onCategory(String key, List<int> sample) {
+    final text = _categoryLines[key];
+    if (text == null) return false;
+    return _say(
+      KarenStep(text, mood: KarenMood.point, emote: KarenEmote.sparkle, companions: sample),
+      force: true,
+    );
+  }
+
+  /// Al pedir sólo monotipo o sólo doble tipo.
+  bool onTypeCount({required bool dual}) =>
+      dual ? _say(_pick('dual', _dualTypeLines)) : _say(_pick('mono', _monoTypeLines));
+
+  /// Al cambiar de forma en la ficha ([kind] = nombre del `FormKind`).
+  bool onFormChanged(String kind, int id, String displayName) {
+    final lines = _formLines[kind] ?? _formLines['other']!;
+    return announce(
+      _pick('form-$kind', lines).fill(name: displayName, companions: [id]),
+      hold: const Duration(seconds: 6),
+    );
+  }
+
+  /// Al ver una evolución con truco (piedra, intercambio, lugar…). [how] es
+  /// la frase entera; una vez por cadena y sesión.
+  bool onSpecialEvolution(String key, String how, List<int> companions) => _once(
+    'evo-$key',
+    KarenStep(
+      _pick<String>('special-evo', _specialEvolutionLines).replaceAll('{how}', how),
+      mood: KarenMood.point,
+      emote: KarenEmote.idea,
+      companions: companions,
+    ),
+  );
+
+  /// Al salir del combate: presume si ganaste o se burla si huiste.
+  bool onBattleEnded({required bool won, required String name, required int id}) => announce(
+    _pick('battle-end-$won', won ? _battleWonLines : _battleFledLines).fill(
+      name: name,
+      companions: [id],
+    ),
+    hold: const Duration(seconds: 6),
+  );
+
+  /// Invitación al combate, una vez por sesión.
+  bool inviteBattle() => _once('battle-invite', _battleTabHint.first);
 
   // ----------------------------------------------------------------- guía
 
@@ -458,7 +529,7 @@ class KarenController extends ChangeNotifier {
     ),
     KarenStep(
       'Aquí está el buscador. Funciona con el nombre y también con el número: '
-      'escribe 25 y sale Pikachu.',
+      'escribe 25 y Pikachu sale el primero.',
       mood: KarenMood.think,
       emote: KarenEmote.idea,
       companions: [25],
@@ -471,6 +542,14 @@ class KarenController extends ChangeNotifier {
       emote: KarenEmote.none,
       companions: [6, 9],
       target: 'types',
+    ),
+    KarenStep(
+      'En "Filtros" eliges una generación, una categoría (legendarios, '
+      'paradoja, megas, formas regionales…), monotipo o doble tipo, y el orden.',
+      mood: KarenMood.point,
+      emote: KarenEmote.sparkle,
+      companions: [150, 1021],
+      target: 'filters',
     ),
     KarenStep(
       'Este corazón muestra sólo tu equipo. Lo que marques se queda guardado '
@@ -543,10 +622,25 @@ class KarenController extends ChangeNotifier {
       target: 'fav',
     ),
     KarenStep(
-      'Aquí cambias entre Datos, Stats con su radar, y la cadena de Evolución.',
+      'Si tiene otras formas (megas, regionales, gigamax, Origen…) salen aquí, '
+      'debajo de su nombre. Tócalas para transformarlo.',
+      mood: KarenMood.surprise,
+      emote: KarenEmote.sparkle,
+      target: 'forms',
+    ),
+    KarenStep(
+      'Datos trae su descripción, cría y habilidades; Stats, su radar y sus '
+      'debilidades; Evolución, cómo evoluciona; y Movimientos, todo lo que aprende.',
       mood: KarenMood.think,
       emote: KarenEmote.idea,
       target: 'tabs',
+    ),
+    KarenStep(
+      'Y aquí lo más divertido: "Combate". Atácame con sus movimientos y verás '
+      'qué tan eficaces son… Sé gentil, por favor.',
+      mood: KarenMood.worry,
+      emote: KarenEmote.sweat,
+      target: 'battle',
     ),
     KarenStep(
       'Desliza a los lados para pasar al siguiente Pokémon sin volver a la '

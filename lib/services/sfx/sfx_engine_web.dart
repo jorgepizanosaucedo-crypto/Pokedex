@@ -53,6 +53,12 @@ class SfxEngine {
     if (ctx != null && ctx.state != 'running') ctx.resume();
   }
 
+  /// Con la pestaña oculta se suspende: nada suena de fondo.
+  static void suspend() {
+    final ctx = _context;
+    if (ctx != null && ctx.state == 'running') ctx.suspend();
+  }
+
   static bool play(String asset, double volume) {
     final buffer = _buffers[asset];
     final ctx = _context;

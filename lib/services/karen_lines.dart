@@ -923,3 +923,329 @@ const List<KarenStep> _tips = [
     emote: KarenEmote.zzz,
   ),
 ];
+
+// ------------------------------------------------------- filtros nuevos
+
+/// Al filtrar por generación.
+const Map<int, KarenStep> _generationLines = {
+  1: KarenStep(
+    'Kanto, donde empezó todo: 151 Pokémon y una Pokédex en la que cabía el '
+    'mundo entero.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.heart,
+    companions: [1, 4, 7],
+  ),
+  2: KarenStep(
+    'Johto trajo el día y la noche, los bebés y los primeros shiny. Y a Togepi, '
+    'que nunca se sabe qué va a hacer.',
+    mood: KarenMood.point,
+    emote: KarenEmote.sparkle,
+    companions: [152, 155, 158],
+  ),
+  3: KarenStep(
+    'Hoenn: mucha agua, habilidades por primera vez y la pelea de Kyogre '
+    'contra Groudon.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+    companions: [252, 255, 258],
+  ),
+  4: KarenStep(
+    'Sinnoh, la región de los mitos: Dialga, Palkia, Giratina… y Arceus, que '
+    'según la leyenda creó todo.',
+    mood: KarenMood.surprise,
+    emote: KarenEmote.exclaim,
+    companions: [387, 390, 393],
+  ),
+  5: KarenStep(
+    'Teselia arrancó con 156 Pokémon nuevos y ninguno antiguo en la historia. '
+    'Valiente, ¿no?',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+    companions: [495, 498, 501],
+  ),
+  6: KarenStep(
+    'Kalos estrenó el tipo Hada y las megaevoluciones. Mira la categoría '
+    '"Megaevoluciones" en los filtros.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.sparkle,
+    companions: [650, 653, 656],
+  ),
+  7: KarenStep(
+    'Alola: formas regionales, ultraentes de otra dimensión y Pokémon que '
+    'cambian con el clima de las islas.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.notes,
+    companions: [722, 725, 728],
+  ),
+  8: KarenStep(
+    'Galar, la región del Dinamax: Pokémon gigantes en estadios llenos. Busca '
+    'la categoría "Gigamax".',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.exclaim,
+    companions: [810, 813, 816],
+  ),
+  9: KarenStep(
+    'Paldea, mundo abierto y Pokémon paradoja: parientes del pasado y del '
+    'futuro de Pokémon que ya conoces.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+    companions: [906, 909, 912],
+  ),
+};
+
+/// Al filtrar por categoría (clave = nombre del `DexCategory`).
+const Map<String, String> _categoryLines = {
+  'starter': 'Los iniciales: el primer amigo de cada entrenador. ¿Cuál escogiste tú?',
+  'legendary': 'Los legendarios. Cada uno tiene su propia leyenda y casi siempre '
+      'su propia canción.',
+  'mythical': 'Los singulares: antes sólo se conseguían en eventos especiales. '
+      'Mew fue el primero, escondido en el juego sin que nadie lo supiera.',
+  'pseudo': 'Pseudolegendarios: tres etapas, 600 puntos de base y mucha '
+      'paciencia para criarlos. Casi todos son dragones.',
+  'ultraBeast': 'Ultraentes: llegaron por agujeros en el cielo de Alola. Ni '
+      'siquiera se sabe si son Pokémon como los demás.',
+  'paradox': 'Pokémon paradoja: versiones del pasado y del futuro. Electrofuria es '
+      'el Raikou prehistórico, por ejemplo. ¡Ábrelos y mira de quién son pariente!',
+  'baby': 'Los bebés: nacen de un huevo y suelen evolucionar con amistad. '
+      'Cuidado, que son adorables.',
+  'fossil': 'Revividos de un fósil. Algunos de Galar se armaron con dos mitades '
+      'de fósiles distintos… y se nota.',
+  'regional': 'Formas regionales: el mismo Pokémon adaptado a otra región. Vulpix '
+      'en Alola se volvió de hielo por el frío de la montaña.',
+  'mega': 'Megaevoluciones: con su megapiedra cambian de aspecto y se vuelven '
+      'mucho más fuertes, pero sólo durante el combate.',
+  'gmax': 'Gigamax: en Galar algunos Pokémon crecen hasta ser enormes y cambian '
+      'de forma. Snorlax gigamax tiene un bosque en la panza.',
+  'otherForms': 'Otras formas: Giratina Origen, Kyogre Primigenio, Deoxys y sus '
+      'formas… cada una con sus propias estadísticas.',
+};
+
+const List<KarenStep> _monoTypeLines = [
+  KarenStep(
+    'Monotipo: Pokémon de un solo tipo. Combínalo con un tipo de la barra y '
+    'te quedan los puros, como los de fuego puro.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+  ),
+  KarenStep(
+    'Los de un solo tipo tienen menos debilidades que combinar… pero también '
+    'menos resistencias.',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+  ),
+];
+
+const List<KarenStep> _dualTypeLines = [
+  KarenStep(
+    'Doble tipo: dos tipos a la vez. Hay combinaciones que se anulan '
+    'debilidades. Míralo en Stats, en "Debilidades".',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+  ),
+  KarenStep(
+    'Con dos tipos, un ataque puede hacer cuatro veces el daño. Ojo con los '
+    'que tienen un ×4 en la tabla.',
+    mood: KarenMood.surprise,
+    emote: KarenEmote.exclaim,
+  ),
+];
+
+// ---------------------------------------------------------------- formas
+
+/// Al cambiar de forma en la ficha (clave = `FormKind.name`).
+const Map<String, List<KarenStep>> _formLines = {
+  'mega': [
+    KarenStep(
+      '¡Megaevolución! {name} ahora tiene otras estadísticas y a veces hasta otro '
+      'tipo. Mira la pestaña Stats.',
+      mood: KarenMood.cheer,
+      emote: KarenEmote.exclaim,
+    ),
+    KarenStep(
+      '{name}. En los juegos sólo un Pokémon por combate puede megaevolucionar. '
+      'Elige bien.',
+      mood: KarenMood.surprise,
+      emote: KarenEmote.sparkle,
+    ),
+    KarenStep(
+      '¡Qué brillo! {name}. La megapiedra y el Megaaro tienen que estar en '
+      'sintonía.',
+      mood: KarenMood.happy,
+      emote: KarenEmote.sparkle,
+    ),
+  ],
+  'gmax': [
+    KarenStep(
+      '{name}. ¡Mira qué tamaño! Gigamax sólo dura tres turnos, pero qué tres '
+      'turnos.',
+      mood: KarenMood.surprise,
+      emote: KarenEmote.exclaim,
+    ),
+    KarenStep(
+      '{name}: los gigamax tienen su propio movimiento Max, más fuerte que el '
+      'de un Dinamax normal.',
+      mood: KarenMood.point,
+      emote: KarenEmote.idea,
+    ),
+  ],
+  'primal': [
+    KarenStep(
+      '{name}. La regresión primigenia lo devuelve a su forma ancestral: así era '
+      'cuando moldeaba los océanos y los continentes.',
+      mood: KarenMood.surprise,
+      emote: KarenEmote.exclaim,
+    ),
+  ],
+  'regional': [
+    KarenStep(
+      '{name}. Mismo Pokémon, otra región: el clima y la comida lo cambiaron '
+      'por completo.',
+      mood: KarenMood.point,
+      emote: KarenEmote.idea,
+    ),
+    KarenStep(
+      '{name}. Fíjate en los tipos: las formas regionales a veces cambian hasta '
+      'de tipo.',
+      mood: KarenMood.think,
+      emote: KarenEmote.thought,
+    ),
+    KarenStep(
+      '¡{name}! Me encantan las formas regionales. Es como ver a un amigo que '
+      'volvió de vacaciones muy cambiado.',
+      mood: KarenMood.happy,
+      emote: KarenEmote.heart,
+    ),
+  ],
+  'other': [
+    KarenStep(
+      '{name}. Algunas formas cambian sólo el aspecto; otras, también las '
+      'estadísticas y el tipo.',
+      mood: KarenMood.point,
+      emote: KarenEmote.idea,
+    ),
+    KarenStep(
+      'Forma nueva: {name}. Compara las estadísticas con la forma normal, a veces '
+      'cambian muchísimo.',
+      mood: KarenMood.think,
+      emote: KarenEmote.thought,
+    ),
+  ],
+};
+
+const List<KarenStep> _movesTabLines = [
+  KarenStep(
+    'Estos son sus movimientos, por nivel, por MT, por huevo y por tutor. Toca '
+    'uno para leer qué hace.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+  ),
+  KarenStep(
+    'El número de la izquierda es el nivel al que lo aprende. "Evo." es al '
+    'evolucionar.',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+  ),
+];
+
+/// Al ver una evolución que no es sólo subir de nivel. {how} es la frase
+/// completa ("Eevee evoluciona en Vaporeon al usarle una Piedra agua").
+const List<String> _specialEvolutionLines = [
+  'Ojo con esta: {how}. No basta con subir de nivel.',
+  'Dato: {how}. ¡Más de un entrenador se quedó esperando sin saberlo!',
+  'Esta evolución tiene truco: {how}.',
+];
+
+const List<KarenStep> _battleTabHint = [
+  KarenStep(
+    '¿Quieres probar sus ataques? El botón "Combate" de arriba te deja '
+    'atacarme. Prometo no quejarme… mucho.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+];
+
+const List<KarenStep> _newFeatureTips = [
+  KarenStep(
+    'En "Filtros", junto al buscador, puedes ver sólo una generación, los '
+    'legendarios, los paradoja o las megaevoluciones.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+    companions: [6, 150],
+  ),
+  KarenStep(
+    'Si un Pokémon tiene formas, salen debajo de su nombre en la ficha: megas, '
+    'regionales, gigamax, los 18 tipos de Arceus…',
+    mood: KarenMood.point,
+    emote: KarenEmote.sparkle,
+    companions: [493],
+  ),
+  KarenStep(
+    'En la ficha, el botón "Combate" te deja atacarme con sus movimientos de '
+    'verdad. Me duele en el alma, pero aprenderás de tipos.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+    companions: [25],
+  ),
+  KarenStep(
+    'En Stats, abajo del todo, está la tabla de debilidades: qué le hace el '
+    'doble de daño y qué no le hace nada.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+    companions: [130],
+  ),
+  KarenStep(
+    'Busca "paradoja" en los filtros: Electrofuria es el Raikou prehistórico, y '
+    'Ferropaladín el Gardevoir del futuro.',
+    mood: KarenMood.surprise,
+    emote: KarenEmote.exclaim,
+    companions: [1021, 1006],
+  ),
+  KarenStep(
+    'Toca una habilidad en la ficha y te digo qué hace. Algunas cambian el '
+    'combate por completo.',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+    companions: [149],
+  ),
+];
+
+const List<KarenStep> _battleWonLines = [
+  KarenStep(
+    '¡Me ganaste con {name}! Voy a necesitar un día libre. Mejor una semana.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+  KarenStep(
+    'Ese {name} pega fuerte. Mi espalda lo confirma. ¡Buen combate!',
+    mood: KarenMood.happy,
+    emote: KarenEmote.sparkle,
+  ),
+  KarenStep(
+    'Perdí, pero aprendiste de tipos. Eso cuenta como victoria para las dos. ¿No?',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+  ),
+  KarenStep(
+    'Ya me curé en el Centro Pokémon. La próxima vez me disfrazo de algo más resistente.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.heart,
+  ),
+];
+
+const List<KarenStep> _battleFledLines = [
+  KarenStep(
+    '¿Ya te vas? Justo cuando le estaba agarrando el gusto… a esquivar.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.notes,
+  ),
+  KarenStep(
+    'Empate técnico. Yo digo que gané porque sigo de pie.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.sparkle,
+  ),
+  KarenStep(
+    'Huir también es estrategia. Te espero cuando quieras la revancha.',
+    mood: KarenMood.wave,
+    emote: KarenEmote.heart,
+  ),
+];

@@ -5,6 +5,9 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/dex_data.dart';
+import '../data/type_chart.dart';
+import '../models/move.dart';
 import '../models/pokemon.dart';
 import '../services/artwork.dart';
 import '../services/favorites_store.dart';
@@ -25,6 +28,10 @@ import '../widgets/pokemon_card.dart';
 import '../widgets/sparkle.dart';
 import '../widgets/stats_view.dart';
 import '../widgets/type_chip.dart';
+import 'battle_screen.dart';
+
+part 'detail_forms.dart';
+part 'detail_tabs.dart';
 
 /// Ficha completa de un Pokémon. Se puede deslizar a izquierda y derecha
 /// para recorrer la lista desde la que se abrió, como las páginas de un álbum.
@@ -180,9 +187,21 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     duration: const Duration(milliseconds: 900),
   );
 
+  /// Transformación al cambiar de forma.
+  late final AnimationController _morph = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  );
+
   Timer? _roarTimer;
   Timer? _tourTimer;
   Pokemon? _pokemon;
+
+  /// Forma elegida en la tira de formas (`null` = la que se abrió).
+  Pokemon? _variant;
+  String? _formKey;
+  bool _loadingForm = false;
+  FormKind _morphKind = FormKind.other;
   bool _announced = false;
   bool _shiny = false;
   int _sparkle = 0;
@@ -250,7 +269,73 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     _entrance.dispose();
     _roar.dispose();
     _hop.dispose();
+    _morph.dispose();
     super.dispose();
+  }
+
+  String get _selectedFormKey =>
+      _formKey ?? (_pokemon == null ? 'v:${widget.entry.id}' : _formKeyOf(_pokemon!));
+
+  /// Cambia a otra forma de la especie con un destello, o abre la ficha del
+  /// pariente paradoja.
+  Future<void> _selectForm(_FormOption option) async {
+    if (option.isLink) {
+      openPokemonById(context, option.linkId!, option.linkName ?? '');
+      return;
+    }
+    if (option.key == _selectedFormKey || _loadingForm) return;
+    final previous = _formKey;
+    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    setState(() {
+      _formKey = option.key;
+      _loadingForm = true;
+    });
+    try {
+      final api = PokeApiService.instance;
+      final next = option.formName != null
+          ? await api.getPokemonInForm(option.pokemonId, option.formName!)
+          : await api.getPokemon(option.pokemonId);
+      if (!mounted || _formKey != option.key) return;
+      final isEntry = option.formName == null && option.pokemonId == widget.entry.id;
+      setState(() {
+        _variant = isEntry ? null : next;
+        _loadingForm = false;
+        _morphKind = option.kind;
+      });
+      _morph.forward(from: 0);
+      final big = option.kind == FormKind.mega ||
+          option.kind == FormKind.gmax ||
+          option.kind == FormKind.primal;
+      SoundService.instance.play(big ? Sfx.shiny : Sfx.open, volume: big ? 0.6 : 0.45);
+      HapticFeedback.heavyImpact();
+      Future.delayed(const Duration(milliseconds: 380), () {
+        if (mounted) SoundService.instance.playCry(next.cryUrl);
+      });
+      _startRoarCycle(next);
+      if (option.kind != FormKind.base) {
+        KarenController.instance.onFormChanged(option.kind.name, next.id, _fullName(next));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _formKey = previous;
+        _loadingForm = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo cargar esa forma. Revisa tu conexión.')),
+      );
+    }
+  }
+
+  void _openBattle(Pokemon pokemon) {
+    SoundService.instance.play(Sfx.open, volume: 0.5);
+    _roarTimer?.cancel();
+    SoundService.instance.stopCry();
+    Navigator.of(context)
+        .push(BattleScreen.route(pokemon, shiny: _shiny))
+        .then((_) {
+          if (mounted && widget.active) _startRoarCycle(_variant ?? pokemon);
+        });
   }
 
   /// Lo que pasa cuando esta ficha es la que se está mirando: cambia el
@@ -282,7 +367,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
 
     // La especie dice si es legendario, y eso manda sobre el tipo.
     PokeApiService.instance
-        .getSpecies(pokemon.id)
+        .getSpecies(pokemon.speciesId)
         .then((species) {
           if (!mounted) return;
           final legendary = species.isLegendary || species.isMythical;
@@ -292,7 +377,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
           if (tourPending) return;
           KarenController.instance.onPokemonOpened(
             id: pokemon.id,
-            displayName: displayName(pokemon.name),
+            displayName: _fullName(pokemon),
             type: pokemon.primaryType,
             total: pokemon.totalStats,
             legendary: legendary,
@@ -318,7 +403,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
   void _playCry(Pokemon pokemon, {bool tapped = false}) {
     _roar.forward(from: 0);
     SoundService.instance.playCry(pokemon.cryUrl);
-    if (tapped) KarenController.instance.onCry(pokemon.id, displayName(pokemon.name));
+    if (tapped) KarenController.instance.onCry(pokemon.id, _fullName(pokemon));
   }
 
   void _toggleAnimated(Pokemon pokemon) {
@@ -329,7 +414,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     HapticFeedback.selectionClick();
     if (next) {
       _hop.forward(from: 0);
-      KarenController.instance.onAnimated(pokemon.id, displayName(pokemon.name));
+      KarenController.instance.onAnimated(pokemon.id, _fullName(pokemon));
     }
   }
 
@@ -341,7 +426,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     if (_shiny) {
       SoundService.instance.play(Sfx.shiny, volume: 0.6);
       HapticFeedback.mediumImpact();
-      KarenController.instance.onShiny(pokemon.id, displayName(pokemon.name));
+      KarenController.instance.onShiny(pokemon.id, _fullName(pokemon));
     } else {
       SoundService.instance.play(Sfx.tap, volume: 0.35);
     }
@@ -353,7 +438,8 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
       future: _future,
       initialData: _pokemon,
       builder: (context, snap) {
-        final pokemon = snap.data;
+        // La forma elegida manda; si no, la que se abrió.
+        final pokemon = _variant ?? snap.data;
         // Mientras llega la ficha ya se sabe el tipo (por el índice), así
         // que el fondo sale de su color y no gris.
         final knownType = pokemon?.primaryType ?? TypeIndex.instance.primaryOf(widget.entry.id);
@@ -378,6 +464,11 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
         } else {
           art = _Artwork(
             pokemon: pokemon,
+            // El Hero sólo para la forma que se abrió: así vuela desde la
+            // tarjeta y no choca con el de otra ficha.
+            heroTag: _variant == null ? PokemonCard.heroTag(widget.entry.id) : null,
+            morph: _morph,
+            morphKind: _morphKind,
             active: widget.active,
             height: artHeight,
             shiny: _shiny,
@@ -390,13 +481,22 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
             onToggleAnimated: () => _toggleAnimated(pokemon),
             onCry: () => _playCry(pokemon, tapped: true),
           );
-          sheet = _InfoSheet(pokemon: pokemon, active: widget.active, wide: wide);
+          sheet = _InfoSheet(
+            pokemon: pokemon,
+            active: widget.active,
+            wide: wide,
+            selectedFormKey: _selectedFormKey,
+            loadingForm: _loadingForm,
+            onSelectForm: _selectForm,
+          );
         }
 
         final error = snap.hasError && pokemon == null;
         final topBar = _TopBar(
           id: widget.entry.id,
+          dexId: pokemon?.speciesId ?? widget.entry.dexId,
           name: widget.entry.name,
+          onBattle: pokemon == null ? null : () => _openBattle(pokemon),
           hasNext: widget.hasNext,
           hasPrevious: widget.hasPrevious,
           active: widget.active,
@@ -464,7 +564,9 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
 
 class _TopBar extends StatelessWidget {
   final int id;
+  final int dexId;
   final String name;
+  final VoidCallback? onBattle;
   final bool hasNext;
   final bool hasPrevious;
 
@@ -473,7 +575,9 @@ class _TopBar extends StatelessWidget {
 
   const _TopBar({
     required this.id,
+    required this.dexId,
     required this.name,
+    required this.onBattle,
     required this.hasNext,
     required this.hasPrevious,
     required this.active,
@@ -492,7 +596,7 @@ class _TopBar extends StatelessWidget {
             icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
           ),
           Text(
-            dexNumber(id),
+            dexNumber(dexId),
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.85),
               fontWeight: FontWeight.w800,
@@ -501,8 +605,9 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          // Pista de que la ficha se puede deslizar.
-          if (hasPrevious || hasNext)
+          // Pista de que la ficha se puede deslizar (en el teléfono no cabe
+          // junto al botón de combate).
+          if ((hasPrevious || hasNext) && !Layout.of(context).isCompact)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Row(
@@ -530,8 +635,46 @@ class _TopBar extends StatelessWidget {
                 ],
               ),
             ),
+          _BattleButton(key: KarenTargets.keyIf(active, 'battle'), onPressed: onBattle),
+          const SizedBox(width: 4),
           _FavoriteButton(key: KarenTargets.keyIf(active, 'fav'), id: id, name: name),
         ],
+      ),
+    );
+  }
+}
+
+/// Botón de "Combate": abre el combate contra Karen con este Pokémon.
+class _BattleButton extends StatelessWidget {
+  final VoidCallback? onPressed;
+
+  const _BattleButton({super.key, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Combatir contra Karen',
+      child: Material(
+        color: Colors.white.withValues(alpha: onPressed == null ? 0.12 : 0.22),
+        shape: StadiumBorder(side: BorderSide(color: Colors.white.withValues(alpha: 0.4))),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onPressed,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.sports_kabaddi_rounded, size: 16, color: Colors.white),
+                SizedBox(width: 6),
+                Text(
+                  'Combate',
+                  style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -611,6 +754,9 @@ class _FavoriteButtonState extends State<_FavoriteButton> with SingleTickerProvi
 /// "Animado" se ve su sprite de combate en movimiento.
 class _Artwork extends StatelessWidget {
   final Pokemon pokemon;
+  final String? heroTag;
+  final AnimationController morph;
+  final FormKind morphKind;
   final bool active;
   final double height;
   final bool shiny;
@@ -625,6 +771,9 @@ class _Artwork extends StatelessWidget {
 
   const _Artwork({
     required this.pokemon,
+    required this.heroTag,
+    required this.morph,
+    required this.morphKind,
     required this.active,
     required this.height,
     required this.shiny,
@@ -645,21 +794,20 @@ class _Artwork extends StatelessWidget {
 
     // Primero la miniatura que ya está en memoria y encima el original
     // cuando llega: nunca queda el hueco vacío.
-    final official = Hero(
-      tag: PokemonCard.heroTag(pokemon.id),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 420),
-        child: ArtworkImage(
-          key: ValueKey(shiny),
-          id: pokemon.id,
-          size: artSize,
-          shiny: shiny,
-          tier: ArtTier.full,
-          thumbUnderlay: true,
-          placeholderColor: Colors.white,
-        ),
+    final image = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 420),
+      child: ArtworkImage(
+        key: ValueKey('${pokemon.id}-${pokemon.formName}-$shiny'),
+        id: pokemon.id,
+        url: shiny ? pokemon.formShinyArt : pokemon.formArt,
+        size: artSize,
+        shiny: shiny,
+        tier: ArtTier.full,
+        thumbUnderlay: true,
+        placeholderColor: Colors.white,
       ),
     );
+    final official = heroTag == null ? image : Hero(tag: heroTag!, child: image);
 
     // En pantallas anchas los controles (grito, shiny) se alinean con la
     // hoja de abajo en vez de irse a las orillas de la ventana.
@@ -683,7 +831,7 @@ class _Artwork extends StatelessWidget {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    pokemon.id.toString().padLeft(3, '0'),
+                    pokemon.speciesId.toString().padLeft(3, '0'),
                     maxLines: 1,
                     style: TextStyle(
                       fontSize: height * 0.52,
@@ -697,7 +845,7 @@ class _Artwork extends StatelessWidget {
               ),
             ),
             AnimatedBuilder(
-              animation: Listenable.merge([float, entrance, roar, hop]),
+              animation: Listenable.merge([float, entrance, roar, hop, morph]),
               builder: (_, child) {
                 // Entrada: llega desde la derecha, girando un poco al frenar.
                 final e = Curves.easeOutCubic.transform(entrance.value);
@@ -716,7 +864,10 @@ class _Artwork extends StatelessWidget {
                 final r = roar.isAnimating || roar.value > 0 ? roar.value : 0.0;
                 final shake = math.sin(r * math.pi * 7) * (1 - r) * 10;
                 final lunge = math.sin(r * math.pi);
-                final grow = (0.82 + 0.18 * e) * (1 + lunge * 0.12);
+                // Transformación: se encoge en un destello y vuelve con rebote.
+                final m = morph.value;
+                final pop = m > 0 && m < 1 ? 1 + math.sin(m * math.pi) * 0.18 * (1 - m) - 0.1 * (1 - m) : 1.0;
+                final grow = (0.82 + 0.18 * e) * (1 + lunge * 0.12) * pop;
 
                 return Transform.translate(
                   offset: Offset(
@@ -743,7 +894,7 @@ class _Artwork extends StatelessWidget {
                     listenable: SettingsStore.instance,
                     builder: (context, _) => SettingsStore.instance.animated && hasSprite
                         ? AnimatedSprite(
-                            key: ValueKey('sprite-$shiny'),
+                            key: ValueKey('sprite-${pokemon.id}-${pokemon.formName}-$shiny'),
                             url: shiny ? pokemon.animatedShinyUrl : pokemon.animatedUrl,
                             size: artSize,
                             fallback: official,
@@ -754,6 +905,7 @@ class _Artwork extends StatelessWidget {
               ),
             ),
             SparkleBurst(trigger: sparkle),
+            _MorphBurst(animation: morph, kind: morphKind, size: height * 1.1),
             // Animado y Shiny.
             Positioned(
               right: 16,
@@ -1007,13 +1159,24 @@ class _InfoSheet extends StatelessWidget {
   final Pokemon pokemon;
   final bool active;
   final bool wide;
+  final String selectedFormKey;
+  final bool loadingForm;
+  final ValueChanged<_FormOption> onSelectForm;
 
-  const _InfoSheet({required this.pokemon, required this.active, required this.wide});
+  const _InfoSheet({
+    required this.pokemon,
+    required this.active,
+    required this.wide,
+    required this.selectedFormKey,
+    required this.loadingForm,
+    required this.onSelectForm,
+  });
 
   @override
   Widget build(BuildContext context) {
     final color = typeStyle(pokemon.primaryType).color;
     final accent = readableOn(color);
+    final formLabel = _formLabelOf(pokemon);
 
     return Container(
       decoration: _sheetDecoration(wide),
@@ -1021,7 +1184,7 @@ class _InfoSheet extends StatelessWidget {
       child: ContentWidth(
         maxWidth: kSheetMaxWidth,
         child: DefaultTabController(
-          length: 3,
+          length: 4,
           child: Column(
             children: [
               const SizedBox(height: 10),
@@ -1043,22 +1206,54 @@ class _InfoSheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            displayName(pokemon.name),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.4,
-                            ),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  displayName(pokemon.speciesName),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.4,
+                                  ),
+                                ),
+                              ),
+                              if (formLabel != null) ...[
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: accent.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      formLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: accent,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            children: pokemon.types
-                                .map((t) => TypeChip(type: t, onColor: false))
-                                .toList(),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: Wrap(
+                              key: ValueKey(pokemon.types.join()),
+                              spacing: 6,
+                              children: pokemon.types
+                                  .map((t) => TypeChip(type: t, onColor: false))
+                                  .toList(),
+                            ),
                           ),
                         ],
                       ),
@@ -1066,6 +1261,14 @@ class _InfoSheet extends StatelessWidget {
                     _TotalBadge(total: pokemon.totalStats, color: accent),
                   ],
                 ),
+              ),
+              _FormStrip(
+                pokemon: pokemon,
+                selectedKey: selectedFormKey,
+                loading: loadingForm,
+                accent: accent,
+                active: active,
+                onSelect: onSelectForm,
               ),
               const SizedBox(height: 4),
               TabBar(
@@ -1081,7 +1284,7 @@ class _InfoSheet extends StatelessWidget {
                 splashFactory: NoSplash.splashFactory,
                 labelColor: AppColors.ink,
                 unselectedLabelColor: AppColors.muted,
-                labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
                 labelStyle: const TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 13,
@@ -1096,10 +1299,11 @@ class _InfoSheet extends StatelessWidget {
                   SoundService.instance.play(Sfx.tap, volume: 0.3);
                   KarenController.instance.onTab(index);
                 },
-                tabs: const [
-                  Tab(text: 'Datos'),
-                  Tab(text: 'Stats'),
-                  Tab(text: 'Evolución'),
+                // Cuatro pestañas en un teléfono: el texto se encoge si no
+                // cabe en lugar de cortarse.
+                tabs: [
+                  for (final label in const ['Datos', 'Stats', 'Evolución', 'Movimientos'])
+                    Tab(child: FittedBox(fit: BoxFit.scaleDown, child: Text(label))),
                 ],
               ),
               Expanded(
@@ -1110,7 +1314,13 @@ class _InfoSheet extends StatelessWidget {
                   children: [
                     _DataTab(pokemon: pokemon, accent: accent, active: active),
                     _StatsTab(pokemon: pokemon, color: color),
-                    _EvolutionTab(pokemon: pokemon, accent: accent),
+                    _EvolutionTab(
+                      pokemon: pokemon,
+                      accent: accent,
+                      active: active,
+                      onSelectForm: onSelectForm,
+                    ),
+                    _MovesTab(pokemon: pokemon, accent: accent),
                   ],
                 ),
               ),
@@ -1178,7 +1388,7 @@ class _DataTabState extends State<_DataTab> {
     super.initState();
     // En initState todavía no se puede llamar a setState.
     if (widget.active) {
-      _species = PokeApiService.instance.getSpecies(widget.pokemon.id);
+      _species = PokeApiService.instance.getSpecies(widget.pokemon.speciesId);
     }
   }
 
@@ -1187,7 +1397,7 @@ class _DataTabState extends State<_DataTab> {
     super.didUpdateWidget(old);
     // Después de didUpdateWidget siempre viene un build: no hace falta setState.
     if (widget.active && _species == null) {
-      _species = PokeApiService.instance.getSpecies(widget.pokemon.id);
+      _species = PokeApiService.instance.getSpecies(widget.pokemon.speciesId);
     }
   }
 
@@ -1289,6 +1499,7 @@ class _DataTabState extends State<_DataTab> {
                   ],
                   accent: widget.accent,
                 ),
+                _BreedingSection(species: species, pokemon: p, accent: widget.accent),
               ],
             );
           },
@@ -1299,44 +1510,12 @@ class _DataTabState extends State<_DataTab> {
         Wrap(
           spacing: 6,
           runSpacing: 6,
-          children: p.abilities
-              .map(
-                (a) => Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: widget.accent.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: widget.accent.withValues(alpha: 0.2)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (a.isHidden)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Icon(Icons.visibility_off_rounded, size: 14, color: widget.accent),
-                        ),
-                      Text(
-                        capitalize(a.name),
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: widget.accent,
-                        ),
-                      ),
-                      if (a.isHidden)
-                        Text(
-                          '  oculta',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            color: widget.accent.withValues(alpha: 0.75),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              )
-              .toList(),
+          children: [for (final a in p.abilities) _AbilityChip(ability: a, accent: widget.accent)],
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Toca una habilidad para ver qué hace.',
+          style: TextStyle(fontSize: 11.5, color: AppColors.muted),
         ),
       ],
     );
@@ -1431,6 +1610,7 @@ class _StatsTab extends StatelessWidget {
         const _SectionTitle('Estadísticas base'),
         const SizedBox(height: 11),
         StatBars(stats: pokemon.stats, color: color),
+        _WeaknessSection(types: pokemon.types),
       ],
     );
   }
@@ -1440,8 +1620,15 @@ class _StatsTab extends StatelessWidget {
 class _EvolutionTab extends StatefulWidget {
   final Pokemon pokemon;
   final Color accent;
+  final bool active;
+  final ValueChanged<_FormOption> onSelectForm;
 
-  const _EvolutionTab({required this.pokemon, required this.accent});
+  const _EvolutionTab({
+    required this.pokemon,
+    required this.accent,
+    required this.active,
+    required this.onSelectForm,
+  });
 
   @override
   State<_EvolutionTab> createState() => _EvolutionTabState();
@@ -1449,13 +1636,47 @@ class _EvolutionTab extends StatefulWidget {
 
 class _EvolutionTabState extends State<_EvolutionTab> {
   late final Future<List<List<EvolutionStep>>> _chain = _loadChain();
+  late final Future<PokemonSpecies> _species = PokeApiService.instance.getSpecies(
+    widget.pokemon.speciesId,
+  );
 
   Future<List<List<EvolutionStep>>> _loadChain() async {
-    final species = await PokeApiService.instance.getSpecies(widget.pokemon.id);
+    final species = await PokeApiService.instance.getSpecies(widget.pokemon.speciesId);
     final url = species.evolutionChainUrl;
     if (url == null) return const [];
-    return PokeApiService.instance.getEvolutionChain(url);
+    final stages = await PokeApiService.instance.getEvolutionChain(url);
+    _announceSpecial(url, stages);
+    return stages;
   }
+
+  /// Si la cadena tiene una evolución con truco, Karen lo cuenta (una vez).
+  void _announceSpecial(String url, List<List<EvolutionStep>> stages) {
+    if (!widget.active) return;
+    for (final stage in stages.skip(1)) {
+      for (final step in stage) {
+        if (step.special && step.howTo != null && step.parentName != null) {
+          KarenController.instance.onSpecialEvolution(
+            url,
+            _EvolutionNotes.sentence(step),
+            [step.parentId!, step.id],
+          );
+          return;
+        }
+      }
+    }
+  }
+
+  Widget _specialForms() => FutureBuilder<PokemonSpecies>(
+    future: _species,
+    builder: (context, snap) => snap.data == null
+        ? const SizedBox.shrink()
+        : _SpecialForms(
+            species: snap.data!,
+            speciesName: widget.pokemon.speciesName,
+            accent: widget.accent,
+            onSelect: widget.onSelectForm,
+          ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -1485,8 +1706,10 @@ class _EvolutionTabState extends State<_EvolutionTab> {
         }
         final stages = snap.data!;
         if (stages.length <= 1) {
-          return Center(
-            child: Padding(
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+            children: [
+              Padding(
               padding: const EdgeInsets.all(28),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1498,7 +1721,7 @@ class _EvolutionTabState extends State<_EvolutionTab> {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    '${displayName(widget.pokemon.name)} no evoluciona.',
+                    '${displayName(widget.pokemon.speciesName)} no evoluciona.',
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5),
                   ),
                   const SizedBox(height: 6),
@@ -1510,12 +1733,18 @@ class _EvolutionTabState extends State<_EvolutionTab> {
                 ],
               ),
             ),
+              _specialForms(),
+            ],
           );
         }
 
         // Con sitio de sobra la cadena se lee mejor en fila; en un teléfono
         // en vertical se apila.
-        final inRow = Layout.of(context).fitsEvolutionRow && stages.length <= 3;
+        // Con muchas ramas (Eevee) se reparten en filas aunque sobre sitio.
+        final inRow =
+            Layout.of(context).fitsEvolutionRow &&
+            stages.length <= 3 &&
+            stages.every((stage) => stage.length <= 3);
 
         final blocks = <Widget>[
           for (final (i, stage) in stages.indexed) ...[
@@ -1530,7 +1759,7 @@ class _EvolutionTabState extends State<_EvolutionTab> {
                   .map(
                     (step) => _EvolutionNode(
                       step: step,
-                      current: step.id == widget.pokemon.id,
+                      current: step.id == widget.pokemon.speciesId,
                       accent: widget.accent,
                     ),
                   )
@@ -1550,6 +1779,11 @@ class _EvolutionTabState extends State<_EvolutionTab> {
               )
             else
               ...blocks,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _EvolutionNotes(stages: stages, accent: widget.accent),
+            ),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: _specialForms()),
           ],
         );
       },

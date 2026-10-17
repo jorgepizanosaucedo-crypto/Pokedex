@@ -33,11 +33,26 @@
   <img src="screenshots/escritorio-ficha.png" alt="Ficha de Charizard en la computadora, con el arte a la izquierda y la información a la derecha">
 </p>
 
+<table>
+  <tr>
+    <td><img src="screenshots/combate.png" alt="Combate contra Karen: Mega Charizard X ataca y Karen, disfrazada de tipo Roca, se queja"></td>
+    <td><img src="screenshots/formas.png" alt="Ficha de Charizard en su forma Mega X, con la tira de formas debajo del nombre"></td>
+    <td><img src="screenshots/filtros.png" alt="Hoja de filtros: generación, monotipo o doble tipo, categoría y orden"></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="screenshots/escritorio-evolucion.png" alt="Las ocho evoluciones de Eevee y cómo se consigue cada una">
+</p>
+
 ## Qué hace
 
-- **Pokédex nacional completa:** los 1025 Pokémon con buscador por nombre o número, filtro por los 18 tipos y tu equipo de favoritos guardado en el dispositivo.
+- **Pokédex nacional completa:** los 1025 Pokémon con buscador por nombre o número (el número exacto sale primero), filtro por los 18 tipos y tu equipo de favoritos guardado en el dispositivo.
+- **Filtros:** por generación (de Kanto a Paldea), monotipo o doble tipo, categoría (iniciales, legendarios, singulares, pseudolegendarios, ultraentes, paradoja, bebés, fósiles) y orden por número o nombre. También lista las variantes: formas regionales, megaevoluciones, gigamax y otras formas.
+- **Formas:** cada ficha muestra las formas de su especie y se transforma al tocarlas: megas, gigamax, Primigenio, formas regionales, Giratina, Dialga y Palkia Origen, los 18 tipos de Arceus… Los Pokémon paradoja enlazan con su pariente (Raikou ↔ Electrofuria).
+- **Combate contra Karen:** el Pokémon usa cuatro de sus movimientos reales, cada tipo con su propio efecto animado. El daño se calcula como en los juegos (nivel 50, STAB, tabla de tipos, críticos). Karen se disfraza de un tipo, recibe los golpes con humor, se quema, se duerme o se confunde, y contesta con ataques de broma.
 - **Fichas vivas:** al abrir un Pokémon entra desde el costado y se presenta con un par de saltitos, respira, y al tocarlo suelta su grito real mientras se lanza hacia delante. Con **Animado** lo ves moverse con su sprite de combate, y con **Shiny** en su variocolor.
-- **Todo lo que dice la PokeAPI:** descripción en español, medidas, habilidades (también las ocultas), radar de estadísticas y cadena evolutiva con las condiciones de cada cambio.
+- **Todo lo que dice la PokeAPI:** descripción en español, medidas, cría (género, grupo huevo, eclosión, crecimiento), habilidades con su descripción, radar de estadísticas, tabla de debilidades, todos los movimientos que aprende y la cadena evolutiva explicada en frases ("Eevee evoluciona en Vaporeon al usarle una Piedra agua"), con el dibujo del objeto y cómo se consigue cada mega o gigamax.
 - **Karen, la mascota:** te guía la primera vez, paso a paso, iluminando cada parte de la pantalla y cambiándose de lado para no taparla. Al abrir tu primer Pokémon te explica la ficha con otra guía. Luego comenta lo que haces con más de 200 frases: saludos según la hora, datos curiosos de 48 Pokémon, comentarios por tipo, reacciones a tus favoritos, al shiny, a los filtros y a las búsquedas sin resultado.
 - **Música y sonido:** un tema por ambiente que cambia con el tipo del Pokémon (los legendarios tienen el suyo), efectos de interfaz y la vocecita de Karen.
 - **Hecha a la medida:** en el teléfono, todo apilado y a mano; en la computadora, cuadrícula compacta y la ficha en dos columnas.

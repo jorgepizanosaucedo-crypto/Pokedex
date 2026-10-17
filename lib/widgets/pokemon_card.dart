@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../data/dex_data.dart';
 import '../models/pokemon.dart';
 import '../services/favorites_store.dart';
 import '../services/type_index.dart';
@@ -44,12 +45,15 @@ class _PokemonCardState extends State<PokemonCard> {
     final known = types != null && types.isNotEmpty;
     final color = known ? typeStyle(types.first).color : const Color(0xFFC9CDD8);
     final favorite = FavoritesStore.instance.contains(id);
-    final name = displayName(widget.item.name);
+    final item = widget.item;
+    final name = item.isForm && item.speciesName != null
+        ? formDisplayName(item.name, item.speciesName!)
+        : displayName(item.name);
     final typeNames = types?.map((t) => typeStyle(t).label).join(' y ');
 
     return Semantics(
       button: true,
-      label: [name, 'número $id', ?typeNames, if (favorite) 'en tu equipo'].join(', '),
+      label: [name, 'número ${item.dexId}', ?typeNames, if (favorite) 'en tu equipo'].join(', '),
       onTap: widget.onTap,
       excludeSemantics: true,
       child: KeyedSubtree(
@@ -130,7 +134,7 @@ class _PokemonCardState extends State<PokemonCard> {
                 const SizedBox(width: 4),
               ],
               Text(
-                dexNumber(widget.item.id),
+                dexNumber(widget.item.dexId),
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.72),
                   fontWeight: FontWeight.w700,

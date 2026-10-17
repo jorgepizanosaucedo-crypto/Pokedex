@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
+import '../models/move.dart';
 import '../models/pokemon.dart';
 import 'prefs.dart';
 
@@ -26,7 +27,10 @@ class PokeApiService {
 
   /// Prefijo de todo lo que se guarda como caché: así se borra de una vez.
   static const String cachePrefix = 'cache.';
-  static const String _listKey = '${cachePrefix}pokemon_list.v1';
+  static const String _listKey = '${cachePrefix}pokemon_list.v2';
+
+  /// Último número de la Pokédex nacional. Después vienen las variantes.
+  static const int dexSize = 1025;
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -41,6 +45,9 @@ class PokeApiService {
   final Map<int, Future<PokemonSpecies>> _speciesCache = {};
   final Map<String, Future<List<List<EvolutionStep>>>> _evolutionCache = {};
   final Map<String, Future<List<TypeMember>>> _typeCache = {};
+  final Map<String, Future<MoveInfo>> _moveCache = {};
+  final Map<String, Future<AbilityInfo>> _abilityCache = {};
+  final Map<String, Future<Map<String, dynamic>>> _formCache = {};
 
   /// Lo que ya llegó, para pintar sin esperar a un `Future`.
   final Map<int, Pokemon> _ready = {};
@@ -51,23 +58,27 @@ class PokeApiService {
   /// Nombre de la API de un Pokémon, si la lista ya llegó.
   String? nameOf(int id) => _names[id];
 
-  final Map<String, Future<List<PokemonListItem>>> _listCache = {};
+  Future<List<PokemonListItem>>? _allFuture;
+  List<PokemonListItem> _forms = const [];
 
-  /// `GET /pokemon?limit=&offset=` → lista de Pokémon.
+  /// Variantes (megas, regionales, gigamax…) que llegaron con la lista.
+  List<PokemonListItem> get forms => _forms;
+
+  /// `GET /pokemon?limit=2000` → los 1025 de la Pokédex nacional.
   ///
-  /// La primera llamada la hace el splash; la Pokédex recibe el mismo
-  /// `Future`, así que cuando aparece la lista normalmente ya llegó.
-  Future<List<PokemonListItem>> getPokemonList({int limit = 151, int offset = 0}) {
-    final key = '$_listKey.$offset.$limit';
-    return _listCache[key] ??= _loadList(key, limit, offset).catchError((Object e) {
-      _listCache.remove(key);
+  /// La misma petición trae detrás las variantes, que quedan en [forms]. La
+  /// primera llamada la hace el splash; la Pokédex recibe el mismo `Future`,
+  /// así que cuando aparece la lista normalmente ya llegó.
+  Future<List<PokemonListItem>> getPokemonList() {
+    return _allFuture ??= _loadList().catchError((Object e) {
+      _allFuture = null;
       throw e;
     });
   }
 
-  Future<List<PokemonListItem>> _loadList(String key, int limit, int offset) async {
+  Future<List<PokemonListItem>> _loadList() async {
     final prefs = await Prefs.load();
-    final stored = prefs?.getString(key);
+    final stored = prefs?.getString(_listKey);
     if (stored != null) {
       try {
         final rows = jsonDecode(stored) as List;
@@ -82,13 +93,13 @@ class PokeApiService {
 
     final response = await _dio.get<Map<String, dynamic>>(
       'pokemon',
-      queryParameters: {'limit': limit, 'offset': offset},
+      queryParameters: {'limit': 2000, 'offset': 0},
     );
     final results = response.data!['results'] as List;
     final list = results.map((e) => PokemonListItem.fromJson(e as Map<String, dynamic>)).toList();
     try {
       await prefs?.setString(
-        key,
+        _listKey,
         jsonEncode([
           for (final p in list) [p.id, p.name],
         ]),
@@ -97,11 +108,42 @@ class PokeApiService {
     return _remember(list);
   }
 
-  List<PokemonListItem> _remember(List<PokemonListItem> list) {
-    for (final item in list) {
-      _names[item.id] = item.name;
+  /// Separa la Pokédex nacional de las variantes y le pone a cada variante
+  /// el número de su especie (el nombre más largo que sea prefijo del suyo:
+  /// "mr-mime-galar" → "mr-mime", no "mr").
+  List<PokemonListItem> _remember(List<PokemonListItem> all) {
+    final national = <PokemonListItem>[];
+    final byName = <String, int>{};
+    for (final item in all) {
+      if (item.id <= dexSize) {
+        national.add(item);
+        _names[item.id] = item.name;
+        byName[item.name] = item.id;
+      }
     }
-    return list;
+    // Las formas por defecto se listan con su forma ("giratina-altered"):
+    // también se reconocen por la especie.
+    for (final item in national) {
+      final dash = item.name.indexOf('-');
+      if (dash > 0) byName.putIfAbsent(item.name.substring(0, dash), () => item.id);
+    }
+    final forms = <PokemonListItem>[];
+    for (final item in all) {
+      if (item.id <= 10000) continue;
+      final parts = item.name.split('-');
+      for (var n = parts.length - 1; n >= 1; n--) {
+        final prefix = parts.take(n).join('-');
+        final dex = byName[prefix];
+        if (dex != null) {
+          forms.add(
+            PokemonListItem(id: item.id, name: item.name, dexId: dex, speciesName: prefix),
+          );
+          break;
+        }
+      }
+    }
+    _forms = forms;
+    return national;
   }
 
   /// `GET /pokemon/{id}/` → objeto [Pokemon].
@@ -173,13 +215,56 @@ class PokeApiService {
         });
   }
 
+  /// `GET /move/{name}/` → datos de un movimiento.
+  Future<MoveInfo> getMove(String name) {
+    return _moveCache[name] ??= _dio
+        .get<Map<String, dynamic>>('move/$name/')
+        .then((r) => MoveInfo.fromJson(r.data!))
+        .catchError((Object e) {
+          _moveCache.remove(name);
+          throw e;
+        });
+  }
+
+  /// `GET /ability/{name}/` → nombre y descripción en español.
+  Future<AbilityInfo> getAbility(String name) {
+    return _abilityCache[name] ??= _dio
+        .get<Map<String, dynamic>>('ability/$name/')
+        .then((r) => AbilityInfo.fromJson(r.data!))
+        .catchError((Object e) {
+          _abilityCache.remove(name);
+          throw e;
+        });
+  }
+
+  /// `GET /pokemon-form/{name}/` → aspecto y tipos de una forma.
+  Future<Map<String, dynamic>> getForm(String name) {
+    return _formCache[name] ??= _dio
+        .get<Map<String, dynamic>>('pokemon-form/$name/')
+        .then((r) => r.data!)
+        .catchError((Object e) {
+          _formCache.remove(name);
+          throw e;
+        });
+  }
+
+  /// Un Pokémon con el aspecto de una de sus formas de aspecto.
+  Future<Pokemon> getPokemonInForm(int id, String formName) async {
+    final results = await Future.wait([getPokemon(id), getForm(formName)]);
+    return (results[0] as Pokemon).withForm(results[1] as Map<String, dynamic>);
+  }
+
   /// Sólo los ids, para filtrar la lista por tipo.
   Future<Set<int>> getTypeMembers(String type) =>
       getTypeEntries(type).then((list) => list.map((e) => e.id).toSet());
 
   /// Olvida todas las respuestas, en memoria y en el dispositivo.
   Future<void> clearCache() async {
-    _listCache.clear();
+    _allFuture = null;
+    _forms = const [];
+    _moveCache.clear();
+    _abilityCache.clear();
+    _formCache.clear();
     _pokemonCache.clear();
     _speciesCache.clear();
     _evolutionCache.clear();

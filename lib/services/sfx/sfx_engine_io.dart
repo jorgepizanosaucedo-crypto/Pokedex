@@ -6,6 +6,8 @@ class SfxEngine {
 
   static void unlock() {}
 
+  static void suspend() {}
+
   /// `false`: que lo reproduzca `audioplayers`.
   static bool play(String asset, double volume) => false;
 }

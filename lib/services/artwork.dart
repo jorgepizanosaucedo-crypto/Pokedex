@@ -39,8 +39,10 @@ class Artwork {
     int id, {
     bool shiny = false,
     ArtTier tier = ArtTier.thumb,
+    String? url,
   }) {
-    final base = _network(artworkUrl(id, shiny: shiny));
+    // [url]: arte propio de una forma de aspecto (Arceus de tipo Fuego…).
+    final base = _network(url ?? artworkUrl(id, shiny: shiny));
     return tier == ArtTier.thumb ? ResizeImage(base, width: thumbPx) : base;
   }
 
