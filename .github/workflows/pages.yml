@@ -41,7 +41,9 @@ jobs:
         run: |
           REPO="${{ github.event.repository.name }}"
           if [[ "$REPO" == *.github.io ]]; then BASE="/"; else BASE="/$REPO/"; fi
-          flutter build web --release --base-href "$BASE"
+          # --wasm: WebAssembly en los navegadores que lo soportan (más fluido en
+          # el teléfono); los demás cargan solos la versión en JavaScript.
+          flutter build web --release --wasm --base-href "$BASE"
 
       - uses: actions/upload-pages-artifact@v3
         with:

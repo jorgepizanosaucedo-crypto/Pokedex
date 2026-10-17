@@ -102,12 +102,16 @@ class _SpinningPokeballState extends State<SpinningPokeball> with SingleTickerPr
     super.dispose();
   }
 
+  // Capa propia: al girar sólo se repinta la pokébola, no lo que la rodea
+  // (en la cabecera obligaba a repintar la barra entera en cada fotograma).
   @override
-  Widget build(BuildContext context) => RotationTransition(
-    turns: _c,
-    child: Transform.rotate(
-      angle: -math.pi / 8,
-      child: Pokeball(size: widget.size, color: widget.color),
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: RotationTransition(
+      turns: _c,
+      child: Transform.rotate(
+        angle: -math.pi / 8,
+        child: Pokeball(size: widget.size, color: widget.color),
+      ),
     ),
   );
 }

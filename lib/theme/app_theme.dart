@@ -91,7 +91,10 @@ const Map<String, String> kHabitats = {
 /// teléfono —la pantalla ya es más estrecha— y recortan donde sobra espacio.
 const double kFormMaxWidth = 460;
 const double kSheetMaxWidth = 680;
-const double kGridMaxWidth = 1180;
+const double kGridMaxWidth = 1080;
+
+/// Ancho total de la ficha en pantallas anchas (arte e información lado a lado).
+const double kDetailWideMaxWidth = 1040;
 
 /// Medidas de la pantalla, para decidir disposición.
 class Layout {
@@ -110,6 +113,14 @@ class Layout {
   /// Hay sitio para poner la cadena evolutiva en fila.
   bool get fitsEvolutionRow => size.width >= 560;
 
+  /// Computadora o tableta en horizontal: la ficha pone el arte a la
+  /// izquierda y la información a la derecha, en vez de apilarlos.
+  bool get isWide => size.width >= 900 && size.height >= 520;
+
+  /// Ancho máximo de cada tarjeta de la lista. En la computadora un poco más
+  /// pequeñas: las de teléfono se veían enormes en un monitor.
+  double get cardMaxExtent => isCompact ? 200 : 178;
+
   /// Alto del arte en la ficha, limitado también por el ancho para que en
   /// horizontal no se coma la pantalla entera.
   double get artworkHeight => [
@@ -119,11 +130,12 @@ class Layout {
   ].reduce((a, b) => a < b ? a : b);
 
   /// Alto de la mascota: cabe entera tanto en un teléfono en horizontal como
-  /// en una pantalla grande.
+  /// en una pantalla grande, y en la computadora no pasa de un tamaño
+  /// razonable (antes llegaba a 400 px y tapaba media pantalla).
   double karenHeight({required bool big}) {
-    final byHeight = size.height * (big ? 0.52 : 0.40);
-    final byWidth = size.width * (big ? 0.5 : 0.34);
-    return (byHeight < byWidth ? byHeight : byWidth).clamp(150.0, big ? 400.0 : 300.0);
+    final byHeight = size.height * (big ? 0.40 : 0.30);
+    final byWidth = size.width * (big ? 0.62 : 0.40);
+    return (byHeight < byWidth ? byHeight : byWidth).clamp(140.0, big ? 300.0 : 220.0);
   }
 }
 

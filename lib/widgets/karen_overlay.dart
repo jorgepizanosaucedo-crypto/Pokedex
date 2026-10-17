@@ -16,6 +16,9 @@ const double _karenAspect = 420 / 1102;
 const double _tourVisibleFraction = 0.94;
 const double _tipVisibleFraction = 0.6;
 
+/// Lado de la pantalla en el que se coloca Karen.
+enum _Side { left, right }
+
 /// Partes de la pantalla que Karen puede iluminar durante la guía.
 ///
 /// Cada pantalla pone `KarenTargets.key('search')` (por ejemplo) en el widget
@@ -27,6 +30,11 @@ class KarenTargets {
 
   static GlobalKey key(String name) =>
       _keys.putIfAbsent(name, () => GlobalKey(debugLabel: 'karen-$name'));
+
+  /// La clave sólo si [enabled]. En las fichas sólo la que se está mirando
+  /// la lleva: el `PageView` construye también las vecinas, y una clave
+  /// global no puede estar en dos sitios a la vez.
+  static GlobalKey? keyIf(bool enabled, String name) => enabled ? key(name) : null;
 
   /// Rectángulo en pantalla, o `null` si ahora mismo no se ve.
   static Rect? rectOf(String? name) {
@@ -99,16 +107,38 @@ class KarenOverlay extends StatefulWidget {
 class _KarenOverlayState extends State<KarenOverlay> {
   final KarenController _karen = KarenController.instance;
 
+  /// Durante la guía se vuelve a medir lo señalado cada poco: la pantalla de
+  /// debajo puede estar todavía entrando, desplazándose o cambiando de tamaño.
+  Timer? _measure;
+  Rect? _rect;
+
   @override
   void initState() {
     super.initState();
     _karen.startIdleWatch();
+    _karen.addListener(_onKaren);
   }
 
   @override
   void dispose() {
+    _karen.removeListener(_onKaren);
     _karen.stopIdleWatch();
+    _measure?.cancel();
     super.dispose();
+  }
+
+  void _onKaren() {
+    if (_karen.inTour) {
+      _measure ??= Timer.periodic(const Duration(milliseconds: 200), (_) => _remeasure());
+    } else {
+      _measure?.cancel();
+      _measure = null;
+    }
+  }
+
+  void _remeasure() {
+    final rect = KarenTargets.rectOf(_karen.currentStep?.target);
+    if (rect != _rect && mounted) setState(() => _rect = rect);
   }
 
   @override
@@ -123,6 +153,7 @@ class _KarenOverlayState extends State<KarenOverlay> {
               final step = _karen.currentStep;
               final line = _karen.line;
               final visible = _karen.visible && (step != null || line != null);
+              _rect = _karen.inTour ? KarenTargets.rectOf(step?.target) : null;
 
               // Karen vive encima del navegador, fuera de cualquier Scaffold:
               // sin este Material sus textos salían subrayados en amarillo.
@@ -134,11 +165,12 @@ class _KarenOverlayState extends State<KarenOverlay> {
                   mood: step?.mood ?? line?.mood ?? KarenMood.idle,
                   emote: step?.emote ?? line?.emote ?? KarenEmote.none,
                   companions: step?.companions ?? line?.companions ?? const [],
-                  target: _karen.inTour ? KarenTargets.rectOf(step?.target) : null,
+                  target: _rect,
                   // En la guía el globo no se cierra solo: lleva sus botones.
                   tour: _karen.inTour ? (index: _karen.tourIndex, total: _karen.tourLength) : null,
                   onNext: _karen.nextStep,
-                  onSkip: _karen.endTour,
+                  onBack: _karen.previousStep,
+                  onSkip: () => _karen.endTour(skipped: true),
                   onDismiss: _karen.hide,
                   // Cada paso de la guía es un globo nuevo: antes el texto se
                   // quedaba en el primer paso si había una frase previa.
@@ -153,7 +185,16 @@ class _KarenOverlayState extends State<KarenOverlay> {
   }
 }
 
-/// Coloca a Karen y su globo según el espacio disponible.
+/// Coloca a Karen y su globo según lo que está explicando.
+///
+/// Reglas, para que nunca tape lo importante:
+/// - Karen se pone en el lado contrario a lo que señala y camina de un lado
+///   a otro entre pasos.
+/// - El globo va pegado a lo señalado (debajo si está arriba, encima si está
+///   abajo), con una flechita hacia ello.
+/// - Si el globo baja hasta la altura de Karen, se aparta de su columna: ni
+///   el globo la tapa a ella ni ella al globo.
+/// - Sin nada que señalar, el globo va a su lado, a la altura de su cabeza.
 class _KarenStage extends StatelessWidget {
   final bool visible;
   final String text;
@@ -163,6 +204,7 @@ class _KarenStage extends StatelessWidget {
   final Rect? target;
   final ({int index, int total})? tour;
   final VoidCallback onNext;
+  final VoidCallback onBack;
   final VoidCallback onSkip;
   final VoidCallback onDismiss;
   final int stamp;
@@ -176,31 +218,106 @@ class _KarenStage extends StatelessWidget {
     required this.target,
     required this.tour,
     required this.onNext,
+    required this.onBack,
     required this.onSkip,
     required this.onDismiss,
     required this.stamp,
   });
 
+  static const double _edge = 8;
+  static const double _margin = 12;
+
+  /// Alto aproximado del globo de la guía (texto de tres líneas y botones).
+  static const double _bubbleEstimate = 190;
+
+  _Side _side(Size screen) {
+    final tour = this.tour;
+    if (tour == null) return _Side.left;
+    final target = this.target;
+    if (target != null) return target.center.dx < screen.width / 2 ? _Side.right : _Side.left;
+    // Sin foco, alterna de lado en cada paso: así se nota que avanza.
+    return tour.index.isEven ? _Side.right : _Side.left;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.sizeOf(context);
+    final screen = MediaQuery.sizeOf(context);
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom + KarenInsets.bottom;
-    final layout = Layout(media);
+    final layout = Layout(screen);
     final isTour = tour != null;
 
-    // En la guía se ve entera y centrada; para un consejo suelto se asoma por
-    // el costado, más discreta.
     final height = layout.karenHeight(big: isTour);
     final width = height * _karenAspect;
     final visibleFraction = isTour ? _tourVisibleFraction : _tipVisibleFraction;
     final visibleHeight = height * visibleFraction;
     final hidden = height - visibleHeight;
+    final mate = width * 0.62;
+
+    final side = _side(screen);
+    // Columna que ocupan ella y sus acompañantes.
+    final columnWidth = companions.isEmpty ? width : width * 0.92 + mate;
+    final columnLeft = side == _Side.left ? _edge : screen.width - _edge - columnWidth;
+    final column = Rect.fromLTWH(
+      columnLeft,
+      screen.height - bottomInset - visibleHeight,
+      columnWidth,
+      visibleHeight,
+    );
+    final karenLeft = side == _Side.left ? _edge : screen.width - _edge - width;
+
+    final maxBubble = isTour ? 380.0 : 340.0;
+    final minBubble = math.min(220.0, screen.width - _margin * 2);
+    double left;
+    double bubbleWidth;
+    double? top;
+    double? bottom;
+    ({bool up, double x})? tail;
+
+    final target = this.target;
+    if (target != null) {
+      final below = target.center.dy < screen.height * 0.55;
+      final spanTop = below ? target.bottom + 14 : target.top - 14 - _bubbleEstimate;
+      final spanBottom = spanTop + _bubbleEstimate;
+      var minX = _margin;
+      var maxX = screen.width - _margin;
+      // Aquí sólo se esquiva a Karen: si hace falta, el globo puede tapar a
+      // sus acompañantes (en un teléfono, con ellos quedaba demasiado estrecho).
+      if (spanBottom > column.top - 6) {
+        if (side == _Side.left) {
+          minX = karenLeft + width + 8;
+        } else {
+          maxX = karenLeft - 8;
+        }
+      }
+      bubbleWidth = math.max(minBubble, math.min(maxBubble, maxX - minX));
+      left = (target.center.dx - bubbleWidth / 2).clamp(minX, math.max(minX, maxX - bubbleWidth));
+      left = left.clamp(_margin, math.max(_margin, screen.width - _margin - bubbleWidth));
+      if (below) {
+        top = target.bottom + 14;
+      } else {
+        bottom = screen.height - target.top + 14;
+      }
+      tail = (up: below, x: (target.center.dx - left).clamp(22.0, bubbleWidth - 22.0));
+    } else {
+      // Junto a ella, a la altura de la cabeza.
+      if (side == _Side.left) {
+        left = column.right + 10;
+        bubbleWidth = math.max(minBubble, math.min(maxBubble, screen.width - left - _margin));
+      } else {
+        bubbleWidth = math.max(minBubble, math.min(maxBubble, column.left - 10 - _margin));
+        left = column.left - 10 - bubbleWidth;
+      }
+      left = left.clamp(_margin, math.max(_margin, screen.width - _margin - bubbleWidth));
+      bottom = bottomInset + visibleHeight * (isTour ? 0.5 : 0.42);
+    }
 
     final bubble = _SpeechBubble(
       key: ValueKey(stamp),
       text: text,
       tour: tour,
+      tail: tail,
       onNext: onNext,
+      onBack: onBack,
       onSkip: onSkip,
       onDismiss: onDismiss,
     );
@@ -223,85 +340,41 @@ class _KarenStage extends StatelessWidget {
                 ),
               ),
             ),
-
-          if (isTour) ...[
-            // Centrada, con el globo encima: se le ve el dibujo completo.
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: bottomInset - hidden,
-              height: height,
-              child: _SlideUp(
-                visible: visible,
-                distance: visibleHeight + 40,
-                child: Center(
-                  child: SizedBox(width: width, height: height, child: _figure(centred: true)),
-                ),
+          // Karen camina al otro lado cuando lo señalado cambia de sitio.
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeInOutCubic,
+            left: karenLeft,
+            bottom: bottomInset - hidden,
+            width: width,
+            height: height,
+            child: _SlideUp(
+              visible: visible,
+              distance: visibleHeight + 40,
+              child: _KarenFigure(
+                mood: mood,
+                emote: emote,
+                companions: companions,
+                stamp: stamp,
+                side: side,
+                hiddenFraction: 1 - visibleFraction,
+                onTap: isTour ? onNext : onDismiss,
               ),
             ),
-            Positioned(
-              left: 16,
-              right: 16,
-              // El globo va justo encima de su cabeza, sin taparle la cara.
-              bottom: bottomInset + visibleHeight * 0.98,
-              child: _SlideUp(
-                visible: visible,
-                distance: 24,
-                delayed: true,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: bubble,
-                  ),
-                ),
-              ),
-            ),
-          ] else ...[
-            // Consejo suelto: pegada al borde, sin salirse de la pantalla.
-            Positioned(
-              left: 4,
-              bottom: bottomInset - hidden,
-              width: width,
-              height: height,
-              child: _SlideUp(
-                visible: visible,
-                distance: visibleHeight + 40,
-                child: _figure(centred: false),
-              ),
-            ),
-            Positioned(
-              left: width * 1.45,
-              right: 12,
-              bottom: bottomInset + visibleHeight * 0.42,
-              child: _SlideUp(
-                visible: visible,
-                distance: 24,
-                delayed: true,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 340),
-                    child: bubble,
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeOutCubic,
+            left: left,
+            width: bubbleWidth,
+            top: top,
+            bottom: bottom,
+            child: _SlideUp(visible: visible, distance: 24, delayed: true, child: bubble),
+          ),
         ],
       ),
     );
   }
-
-  Widget _figure({required bool centred}) => _KarenFigure(
-    mood: mood,
-    emote: emote,
-    companions: companions,
-    stamp: stamp,
-    // Pegada al borde izquierdo, los acompañantes van todos a su derecha
-    // para que ninguno se salga de la pantalla.
-    companionsBothSides: centred,
-    onTap: tour != null ? onNext : onDismiss,
-  );
 }
 
 /// Velo oscuro con un hueco redondeado y borde blanco sobre [target].
@@ -319,9 +392,10 @@ class _Spotlight extends StatelessWidget {
     // de tipos, el buscador) se queda con el borde completo a la vista.
     final hole = target?.inflate(6).intersect(screen.deflate(3));
     if (hole == null || hole.isEmpty) return const ColoredBox(color: _veil);
+    // El hueco viaja de un elemento al siguiente en vez de saltar.
     return TweenAnimationBuilder<Rect?>(
-      tween: RectTween(begin: hole, end: hole),
-      duration: const Duration(milliseconds: 320),
+      tween: RectTween(end: hole),
+      duration: const Duration(milliseconds: 380),
       curve: Curves.easeOutCubic,
       builder: (context, rect, _) => CustomPaint(
         size: Size.infinite,
@@ -433,13 +507,17 @@ class _SlideUpState extends State<_SlideUp> with SingleTickerProviderStateMixin 
 }
 
 /// El dibujo de Karen, sin tocar, animado por capas: respira, reacciona según
-/// el ánimo, y a los costados la acompañan Pokémon que flotan.
+/// el ánimo, y a su lado la acompañan Pokémon que flotan.
 class _KarenFigure extends StatefulWidget {
   final KarenMood mood;
   final KarenEmote emote;
   final List<int> companions;
   final int stamp;
-  final bool companionsBothSides;
+  final _Side side;
+
+  /// Parte de abajo que queda fuera de la pantalla: los acompañantes van
+  /// siempre por encima de ella.
+  final double hiddenFraction;
   final VoidCallback onTap;
 
   const _KarenFigure({
@@ -447,7 +525,8 @@ class _KarenFigure extends StatefulWidget {
     required this.emote,
     required this.companions,
     required this.stamp,
-    required this.companionsBothSides,
+    required this.side,
+    required this.hiddenFraction,
     required this.onTap,
   });
 
@@ -468,16 +547,24 @@ class _KarenFigureState extends State<_KarenFigure> with TickerProviderStateMixi
     duration: const Duration(milliseconds: 900),
   )..forward();
 
+  /// Saltitos mientras camina al otro lado de la pantalla.
+  late final AnimationController _walk = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
+
   @override
   void didUpdateWidget(covariant _KarenFigure old) {
     super.didUpdateWidget(old);
     if (old.stamp != widget.stamp || old.mood != widget.mood) _gesture.forward(from: 0);
+    if (old.side != widget.side) _walk.forward(from: 0);
   }
 
   @override
   void dispose() {
     _idle.dispose();
     _gesture.dispose();
+    _walk.dispose();
     super.dispose();
   }
 
@@ -530,9 +617,11 @@ class _KarenFigureState extends State<_KarenFigure> with TickerProviderStateMixi
           scaleY: breathe.scaleY,
         );
       case KarenMood.point:
+        // Se inclina hacia el centro de la pantalla, hacia lo que explica.
+        final lean = widget.side == _Side.left ? 1 : -1;
         return (
           offset: Offset.zero,
-          angle: 0.035 * g,
+          angle: 0.035 * g * lean,
           scaleX: breathe.scaleX,
           scaleY: breathe.scaleY,
         );
@@ -555,30 +644,32 @@ class _KarenFigureState extends State<_KarenFigure> with TickerProviderStateMixi
         final w = constraints.maxWidth;
         final h = constraints.maxHeight;
         final mate = w * 0.62;
+        final onLeft = widget.side == _Side.left;
 
         return GestureDetector(
           onTap: widget.onTap,
           behavior: HitTestBehavior.opaque,
           child: AnimatedBuilder(
-            animation: Listenable.merge([_idle, _gesture]),
+            animation: Listenable.merge([_idle, _gesture, _walk]),
             builder: (context, _) {
               final t = _transform(
                 Curves.easeOut.transform(_gesture.value),
                 Curves.easeInOut.transform(_idle.value),
               );
               final bob = math.sin(_idle.value * math.pi * 2) * 5;
+              // Tres saltitos mientras cruza.
+              final hop = _walk.isAnimating ? math.sin(_walk.value * math.pi * 3).abs() : 0.0;
 
               return Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  // Acompañantes: a sus costados, flotando a destiempo.
-                  // Si está pegada al borde, todos van a su derecha para que
-                  // ninguno quede fuera de la pantalla.
+                  // Acompañantes: en columna, del lado de dentro de la
+                  // pantalla y fuera de su silueta, flotando a destiempo.
                   for (final (i, id) in widget.companions.take(3).indexed)
                     Positioned(
-                      left: widget.companionsBothSides && i.isEven ? -mate * 0.62 : null,
-                      right: widget.companionsBothSides && i.isEven ? null : -mate * 0.62,
-                      bottom: h * (0.26 + i * 0.2),
+                      left: onLeft ? w * 0.92 : null,
+                      right: onLeft ? null : w * 0.92,
+                      bottom: h * (widget.hiddenFraction + 0.03) + i * mate * 0.95,
                       child: Transform.translate(
                         offset: Offset(0, i.isEven ? bob : -bob),
                         child: _Companion(id: id, size: mate, delayIndex: i),
@@ -588,7 +679,7 @@ class _KarenFigureState extends State<_KarenFigure> with TickerProviderStateMixi
                   // El dibujo, intacto. Sólo se mueve el contenedor.
                   Positioned.fill(
                     child: Transform.translate(
-                      offset: t.offset,
+                      offset: t.offset + Offset(0, -14 * hop),
                       child: Transform.rotate(
                         angle: t.angle,
                         alignment: Alignment.bottomCenter,
@@ -607,15 +698,15 @@ class _KarenFigureState extends State<_KarenFigure> with TickerProviderStateMixi
                     ),
                   ),
 
-                  // Reacción manga junto a su cabeza: a la izquierda cuando
-                  // está centrada; pegada a la orilla se saldría de la
-                  // pantalla, así que ahí va encima y hacia la derecha.
+                  // Reacción manga junto a su cabeza, del lado de dentro: así
+                  // no le tapa la cara ni se sale de la pantalla.
                   if (widget.emote != KarenEmote.none)
                     Positioned(
-                      left: widget.companionsBothSides ? -w * 0.34 : w * 0.38,
-                      top: widget.companionsBothSides ? h * 0.02 : -h * 0.3,
-                      width: w * 0.9,
-                      height: h * 0.3,
+                      left: onLeft ? w * 0.62 : null,
+                      right: onLeft ? null : w * 0.62,
+                      top: -h * 0.06,
+                      width: w * 0.8,
+                      height: h * 0.2,
                       child: CustomPaint(painter: _EmotePainter(widget.emote, _idle.value)),
                     ),
                 ],
@@ -855,7 +946,11 @@ class _EmotePainter extends CustomPainter {
 class _SpeechBubble extends StatefulWidget {
   final String text;
   final ({int index, int total})? tour;
+
+  /// Flechita hacia lo señalado: arriba o abajo, a [x] del borde izquierdo.
+  final ({bool up, double x})? tail;
   final VoidCallback onNext;
+  final VoidCallback onBack;
   final VoidCallback onSkip;
   final VoidCallback onDismiss;
 
@@ -863,7 +958,9 @@ class _SpeechBubble extends StatefulWidget {
     super.key,
     required this.text,
     required this.tour,
+    required this.tail,
     required this.onNext,
+    required this.onBack,
     required this.onSkip,
     required this.onDismiss,
   });
@@ -878,6 +975,11 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
 
   /// Cuánto "pesa" cada signo: los puntos hacen respirar la frase.
   static const Map<String, int> _pauses = {'.': 4, '!': 4, '?': 4, '…': 4, ',': 3, ':': 3, ';': 3};
+
+  static const Color _ink = Color(0xFF1B1424);
+  static const Color _red = Color(0xFFE3141B);
+
+  static final RegExp _voiced = RegExp(r'[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]');
 
   int _shown = 0;
   bool _done = false;
@@ -907,8 +1009,10 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
       final c = chars[_shown];
       setState(() => _shown++);
 
+      // Una sílaba cada ~70 ms basta para que suene a voz; una por letra
+      // era el doble de trabajo para el mismo efecto.
       final now = DateTime.now().millisecondsSinceEpoch;
-      if (RegExp(r'[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]').hasMatch(c) && now - _lastBlip > 42) {
+      if (_voiced.hasMatch(c) && now - _lastBlip > 70) {
         _lastBlip = now;
         SoundService.instance.play(Sfx.voice, volume: 0.22);
       }
@@ -939,100 +1043,134 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
   @override
   Widget build(BuildContext context) {
     final tour = widget.tour;
+    final tail = widget.tail;
     final partial = widget.text.characters.take(_shown).toString();
+
+    final body = Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _ink, width: 2),
+        boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 18, offset: Offset(0, 6))],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                KarenController.name,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: _red,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const Spacer(),
+              if (tour != null)
+                Text(
+                  '${tour.index + 1}/${tour.total}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.muted,
+                  ),
+                )
+              else
+                const Icon(Icons.close_rounded, size: 16, color: AppColors.muted),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // El texto completo, invisible, reserva el tamaño final del globo:
+          // así no crece a saltos mientras se escribe.
+          Stack(
+            children: [
+              Opacity(opacity: 0, child: Text(widget.text, style: _textStyle)),
+              Positioned.fill(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Text(
+                    partial,
+                    style: _textStyle,
+                    // Que el lector de pantalla reciba la frase entera.
+                    semanticsLabel: widget.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (tour != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: widget.onSkip,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 34),
+                    foregroundColor: AppColors.muted,
+                  ),
+                  child: const Text('Saltar', style: TextStyle(fontSize: 12.5)),
+                ),
+                const Spacer(),
+                // Sólo la flecha: con la palabra entera los botones no cabían
+                // en el globo de un teléfono.
+                if (tour.index > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: IconButton.outlined(
+                      onPressed: widget.onBack,
+                      tooltip: 'Atrás',
+                      iconSize: 18,
+                      constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                      padding: EdgeInsets.zero,
+                      style: IconButton.styleFrom(
+                        foregroundColor: _ink,
+                        side: const BorderSide(color: AppColors.line),
+                      ),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    ),
+                  ),
+                FilledButton(
+                  onPressed: widget.onNext,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _red,
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    minimumSize: const Size(0, 34),
+                  ),
+                  child: Text(
+                    tour.index == tour.total - 1 ? '¡Listo!' : 'Siguiente',
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
 
     return GestureDetector(
       onTap: _onTap,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF1B1424), width: 2),
-          boxShadow: const [
-            BoxShadow(color: Color(0x33000000), blurRadius: 18, offset: Offset(0, 6)),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: tail == null
+          ? body
+          : Stack(
+              clipBehavior: Clip.none,
               children: [
-                const Text(
-                  KarenController.name,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFFE3141B),
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const Spacer(),
-                if (tour != null)
-                  Text(
-                    '${tour.index + 1}/${tour.total}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.muted,
-                    ),
-                  )
-                else
-                  const Icon(Icons.close_rounded, size: 16, color: AppColors.muted),
-              ],
-            ),
-            const SizedBox(height: 4),
-            // El texto completo, invisible, reserva el tamaño final del globo:
-            // así no crece a saltos mientras se escribe.
-            Stack(
-              children: [
-                Opacity(opacity: 0, child: Text(widget.text, style: _textStyle)),
-                Positioned.fill(
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: Text(
-                      partial,
-                      style: _textStyle,
-                      // Que el lector de pantalla reciba la frase entera.
-                      semanticsLabel: widget.text,
-                    ),
-                  ),
+                body,
+                Positioned(
+                  left: tail.x - 11,
+                  top: tail.up ? -11 : null,
+                  bottom: tail.up ? null : -11,
+                  width: 22,
+                  height: 13,
+                  child: CustomPaint(painter: _TailPainter(up: tail.up)),
                 ),
               ],
             ),
-            if (tour != null) ...[
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: widget.onSkip,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      minimumSize: const Size(0, 34),
-                      foregroundColor: AppColors.muted,
-                    ),
-                    child: const Text('Saltar', style: TextStyle(fontSize: 12.5)),
-                  ),
-                  const Spacer(),
-                  FilledButton(
-                    onPressed: widget.onNext,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFE3141B),
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      minimumSize: const Size(0, 34),
-                    ),
-                    child: Text(
-                      tour.index == tour.total - 1 ? '¡Listo!' : 'Siguiente',
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
@@ -1042,4 +1180,46 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
     color: AppColors.ink,
     fontWeight: FontWeight.w500,
   );
+}
+
+/// Flechita del globo: blanca con el mismo borde de tinta, y la base metida
+/// en el globo para tapar su borde en ese tramo.
+class _TailPainter extends CustomPainter {
+  final bool up;
+
+  const _TailPainter({required this.up});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final tip = up ? 0.0 : h;
+    final base = up ? h : 0.0;
+    final inner = up ? h + 2 : -2.0;
+
+    final fill = Path()
+      ..moveTo(0, base)
+      ..lineTo(w / 2, tip)
+      ..lineTo(w, base)
+      ..lineTo(w, inner)
+      ..lineTo(0, inner)
+      ..close();
+    canvas.drawPath(fill, Paint()..color = AppColors.surface);
+
+    final edge = Path()
+      ..moveTo(0, base)
+      ..lineTo(w / 2, tip)
+      ..lineTo(w, base);
+    canvas.drawPath(
+      edge,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..strokeJoin = StrokeJoin.round
+        ..color = const Color(0xFF1B1424),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TailPainter old) => old.up != up;
 }

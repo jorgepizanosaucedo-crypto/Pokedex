@@ -5,6 +5,7 @@ import 'screens/splash_screen.dart';
 import 'services/karen_controller.dart';
 import 'services/music_service.dart';
 import 'services/settings_store.dart';
+import 'services/sound_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/karen_overlay.dart';
 
@@ -23,6 +24,9 @@ Future<void> main() async {
     ..maximumSizeBytes = 200 << 20;
 
   MusicService.instance.init();
+  // En web los efectos se bajan y decodifican ya, para que el primero suene
+  // a tiempo (el de la apertura incluido).
+  SoundService.instance.preload();
   // Música, efectos y Karen se guardan; se aplican antes del primer cuadro.
   await SettingsStore.instance.load();
   runApp(const PokedexApp());
@@ -42,6 +46,7 @@ class PokedexApp extends StatelessWidget {
       // gesto, cada toque sirve también para arrancar la música.
       builder: (context, child) => Listener(
         onPointerDown: (_) {
+          SoundService.instance.unlock();
           MusicService.instance.ensureStarted();
           KarenController.instance.ping();
         },

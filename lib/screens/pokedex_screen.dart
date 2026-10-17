@@ -71,6 +71,9 @@ class _PokedexScreenState extends State<PokedexScreen> {
     // para que se vea lo que Karen va señalando.
     KarenTourLauncher.handler = () {
       if (_scroll.hasClients) _scroll.jumpTo(0);
+      // Al repetir la guía, la de la ficha vuelve a salir con el siguiente
+      // Pokémon que se abra.
+      ProfileStore.instance.resetDetailTour();
       KarenController.instance.startTour();
     };
 
@@ -125,6 +128,8 @@ class _PokedexScreenState extends State<PokedexScreen> {
           _typeMembers = members;
           _loadingType = false;
         });
+        final sample = (members.where((id) => id <= _dexSize).toList()..sort()).take(2).toList();
+        KarenController.instance.onTypeSelected(type, sample);
       }
     } catch (_) {
       if (mounted && _type == type) {
@@ -171,6 +176,16 @@ class _PokedexScreenState extends State<PokedexScreen> {
     Navigator.of(context).push(DetailScreen.route(list, index));
   }
 
+  void _toggleTeam() {
+    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    setState(() => _onlyFavorites = !_onlyFavorites);
+    if (_onlyFavorites) {
+      final team = FavoritesStore.instance;
+      final sample = _all.where((item) => team.contains(item.id)).take(3).map((i) => i.id).toList();
+      KarenController.instance.onTeamShown(team.count, sample);
+    }
+  }
+
   void _openRandom() {
     final list = _visible.isEmpty ? _all : _visible;
     if (list.isEmpty) return;
@@ -188,6 +203,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
       value: 76,
       child: Scaffold(
         floatingActionButton: FloatingActionButton.extended(
+          key: KarenTargets.key('random'),
           onPressed: _openRandom,
           backgroundColor: AppColors.pokeRed,
           foregroundColor: Colors.white,
@@ -253,73 +269,84 @@ class _PokedexScreenState extends State<PokedexScreen> {
       scrolledUnderElevation: 3,
       shadowColor: const Color(0x401B1D2A),
       surfaceTintColor: Colors.transparent,
-      titleSpacing: 16,
-      systemOverlayStyle: SystemUiOverlayStyle.light,
-      // El título va en el toolbar, no en un FlexibleSpaceBar: así no depende
-      // del rango de colapso y nunca se desvanece.
-      title: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Pokédex',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.3,
-              height: 1.1,
+      titleSpacing: 0,
+      centerTitle: false,
+      automaticallyImplyLeading: false,
+      // Título y botones van dentro del mismo ancho que la cuadrícula: en una
+      // pantalla ancha antes quedaban pegados a las orillas de la ventana,
+      // lejos de todo lo demás.
+      title: ContentWidth(
+        maxWidth: kGridMaxWidth,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 16, right: 12),
+          child: IconTheme.merge(
+            data: const IconThemeData(color: Colors.white),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Pokédex',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                          height: 1.1,
+                        ),
+                      ),
+                      Text(
+                        snap.hasData
+                            ? '$count ${count == 1 ? 'resultado' : 'resultados'} · PokeAPI'
+                            : 'Conectando con la PokeAPI…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _FavoritesToggle(
+                  key: KarenTargets.key('team'),
+                  active: _onlyFavorites,
+                  onPressed: _toggleTeam,
+                ),
+                Row(
+                  key: KarenTargets.key('sound'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [_MusicToggle(), _SoundToggle()],
+                ),
+                const SizedBox(width: 6),
+                // Avatar del entrenador: abre su perfil. La clave va en el
+                // avatar para que el foco de la guía lo rodee sólo a él.
+                ListenableBuilder(
+                  listenable: ProfileStore.instance,
+                  builder: (context, _) => KeyedSubtree(
+                    key: KarenTargets.key('avatar'),
+                    child: TrainerAvatar(
+                      photo: ProfileStore.instance.photo,
+                      initials: ProfileStore.instance.initials,
+                      size: 36,
+                      ring: Colors.white,
+                      fill: Colors.white.withValues(alpha: 0.18),
+                      tooltip: 'Tu perfil',
+                      onTap: () => showTrainerSheet(context),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          Text(
-            snap.hasData
-                ? '$count ${count == 1 ? 'resultado' : 'resultados'} · PokeAPI'
-                : 'Conectando con la PokeAPI…',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.85),
-              fontSize: 11.5,
-              fontWeight: FontWeight.w500,
-              height: 1.3,
-            ),
-          ),
-        ],
+        ),
       ),
-      actions: [
-        _FavoritesToggle(
-          key: KarenTargets.key('team'),
-          active: _onlyFavorites,
-          onPressed: () {
-            SoundService.instance.play(Sfx.tap, volume: 0.35);
-            setState(() => _onlyFavorites = !_onlyFavorites);
-          },
-        ),
-        Row(
-          key: KarenTargets.key('sound'),
-          mainAxisSize: MainAxisSize.min,
-          children: const [_MusicToggle(), _SoundToggle()],
-        ),
-        // Avatar del entrenador: abre su perfil.
-        ListenableBuilder(
-          listenable: ProfileStore.instance,
-          builder: (context, _) => Padding(
-            padding: const EdgeInsets.fromLTRB(6, 13, 14, 13),
-            // La clave va en el avatar y no en el relleno: así el foco de la
-            // guía lo rodea a él, sin salirse por la orilla de la pantalla.
-            child: KeyedSubtree(
-              key: KarenTargets.key('avatar'),
-              child: TrainerAvatar(
-                photo: ProfileStore.instance.photo,
-                initials: ProfileStore.instance.initials,
-                size: 36,
-                ring: Colors.white,
-                fill: Colors.white.withValues(alpha: 0.18),
-                tooltip: 'Tu perfil',
-                onTap: () => showTrainerSheet(context),
-              ),
-            ),
-          ),
-        ),
-      ],
       flexibleSpace: Stack(
         fit: StackFit.expand,
         children: [
@@ -335,7 +362,13 @@ class _PokedexScreenState extends State<PokedexScreen> {
           Positioned(
             top: -74,
             right: -46,
-            child: SpinningPokeball(size: 170, color: Colors.white.withValues(alpha: 0.13)),
+            // Quieta: girando, la lista nunca dejaba de pedir fotogramas, y
+            // en el teléfono eso se notaba al desplazarse.
+            child: SpinningPokeball(
+              size: 170,
+              color: Colors.white.withValues(alpha: 0.13),
+              animate: false,
+            ),
           ),
         ],
       ),
@@ -372,15 +405,16 @@ class _PokedexScreenState extends State<PokedexScreen> {
     );
   }
 
-  /// Centra la cuadrícula en pantallas anchas en lugar de estirarla.
+  /// Centra la cuadrícula en pantallas anchas en lugar de estirarla. Queda
+  /// alineada con el buscador y la cabecera, que usan el mismo ancho.
   EdgeInsets _gridPadding(BuildContext context) {
-    final side = ((MediaQuery.sizeOf(context).width - kGridMaxWidth) / 2).clamp(12.0, 400.0);
+    final side = math.max(0.0, (MediaQuery.sizeOf(context).width - kGridMaxWidth) / 2) + 12;
     return EdgeInsets.fromLTRB(side, 8, side, 0);
   }
 
   /// Dos columnas en un teléfono, seis en una pantalla ancha.
-  static const SliverGridDelegate _gridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
-    maxCrossAxisExtent: 200,
+  SliverGridDelegate get _gridDelegate => SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: Layout.of(context).cardMaxExtent,
     mainAxisSpacing: 10,
     crossAxisSpacing: 10,
     childAspectRatio: 1.4,

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../services/favorites_store.dart';
@@ -14,6 +15,10 @@ import 'pokedex_screen.dart';
 
 /// Apertura de la app: la pokébola cae, rebota, tiembla y se abre en un
 /// destello blanco que da paso a la Pokédex.
+///
+/// En el navegador la pokébola espera un toque antes de abrirse: los
+/// navegadores no dejan sonar nada hasta que hay un gesto, y sin esa pausa la
+/// apertura, su sonido y la música se perdían.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -21,13 +26,27 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1600),
   );
 
+  /// Hasta dónde llega la caída: ahí espera el toque en web.
+  static const double _landed = 0.36;
+
   bool _left = false;
+  bool _opening = false;
+
+  /// Aparición del aviso "Toca para empezar" y su latido.
+  late final AnimationController _gate = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 450),
+  );
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  );
 
   /// Carga de datos guardados, en paralelo a la animación de apertura.
   late final Future<void> _ready;
@@ -62,8 +81,33 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     // corre la animación, así la Pokédex aparece ya cargada.
     PokeApiService.instance.getPokemonList(limit: 1025).then((_) {}, onError: (Object _) {});
     TypeIndex.instance.load();
+    if (kIsWeb) {
+      _c.animateTo(_landed).then((_) {
+        if (!mounted || _opening) return;
+        _gate.forward();
+        _pulse.repeat(reverse: true);
+      });
+    } else {
+      _open();
+    }
+  }
+
+  /// La pokébola tiembla, se abre con su sonido y da paso a la app.
+  void _open() {
+    if (_opening) return;
+    _opening = true;
+    _pulse.stop();
+    _gate.reverse();
     SoundService.instance.play(Sfx.start, volume: 0.7);
     _c.forward().then((_) => _leave());
+  }
+
+  void _onTap() {
+    // En web el toque es el que abre la pokébola; después, o fuera del
+    // navegador, salta lo que queda de animación.
+    if (kIsWeb && !_opening) return _open();
+    _c.stop();
+    _leave();
   }
 
   /// Sale del splash (al terminar la animación o al tocar la pantalla).
@@ -95,6 +139,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   @override
   void dispose() {
     _c.dispose();
+    _gate.dispose();
+    _pulse.dispose();
     super.dispose();
   }
 
@@ -107,13 +153,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       backgroundColor: AppColors.night,
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        // Tocar la pantalla salta la animación.
-        onTap: () {
-          _c.stop();
-          _leave();
-        },
+        onTap: _onTap,
         child: AnimatedBuilder(
-          animation: _c,
+          animation: Listenable.merge([_c, _gate, _pulse]),
           builder: (context, _) {
             // Un temblor que se va apagando: tres sacudidas cada vez más suaves.
             final wobble = math.sin(_shake.value * math.pi * 6) * (1 - _shake.value) * 0.12;
@@ -165,7 +207,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                 Align(
                   alignment: const Alignment(0, 0.62),
                   child: Opacity(
-                    opacity: _title.value,
+                    opacity: math.max(_title.value, _gate.value),
                     child: Transform.translate(
                       offset: Offset(0, (1 - _title.value) * 18),
                       child: Column(
@@ -195,6 +237,28 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                               letterSpacing: 2,
                             ),
                           ),
+                          if (kIsWeb) ...[
+                            const SizedBox(height: 34),
+                            Opacity(
+                              opacity: _gate.value * (0.45 + 0.55 * _pulse.value),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(30),
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                                ),
+                                child: const Text(
+                                  'TOCA PARA EMPEZAR',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 2.4,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

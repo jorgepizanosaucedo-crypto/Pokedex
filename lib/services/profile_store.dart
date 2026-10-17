@@ -22,12 +22,16 @@ class ProfileStore extends ChangeNotifier {
   String _name = '';
   String? _favoriteType;
   bool _tutorialDone = false;
+  bool _detailTourDone = false;
   Uint8List? _photo;
 
   bool get loaded => _loaded;
   String get name => _name;
   String? get favoriteType => _favoriteType;
   bool get tutorialDone => _tutorialDone;
+
+  /// Ya vio la guía de la ficha (la que Karen da al abrir el primer Pokémon).
+  bool get detailTourDone => _detailTourDone;
   Uint8List? get photo => _photo;
 
   /// Hay sesión cuando el entrenador ya puso su nombre.
@@ -53,6 +57,7 @@ class ProfileStore extends ChangeNotifier {
         _name = json['name'] as String? ?? '';
         _favoriteType = json['favoriteType'] as String?;
         _tutorialDone = json['tutorialDone'] as bool? ?? false;
+        _detailTourDone = json['detailTourDone'] as bool? ?? false;
       }
       final photo = prefs?.getString(_photoKey);
       if (photo != null) _photo = base64Decode(photo);
@@ -90,11 +95,26 @@ class ProfileStore extends ChangeNotifier {
     await _persist();
   }
 
+  Future<void> markDetailTourDone() async {
+    if (_detailTourDone) return;
+    _detailTourDone = true;
+    await _persist();
+  }
+
+  /// Para repetir la guía desde el perfil: la de la ficha vuelve a salir al
+  /// abrir el siguiente Pokémon.
+  Future<void> resetDetailTour() async {
+    if (!_detailTourDone) return;
+    _detailTourDone = false;
+    await _persist();
+  }
+
   /// Borra el perfil del dispositivo (cerrar sesión).
   Future<void> clear() async {
     _name = '';
     _favoriteType = null;
     _tutorialDone = false;
+    _detailTourDone = false;
     _photo = null;
     notifyListeners();
     final prefs = await Prefs.load();
@@ -109,7 +129,12 @@ class ProfileStore extends ChangeNotifier {
     try {
       await prefs?.setString(
         _key,
-        jsonEncode({'name': _name, 'favoriteType': _favoriteType, 'tutorialDone': _tutorialDone}),
+        jsonEncode({
+          'name': _name,
+          'favoriteType': _favoriteType,
+          'tutorialDone': _tutorialDone,
+          'detailTourDone': _detailTourDone,
+        }),
       );
       final photo = _photo;
       if (photo == null) {

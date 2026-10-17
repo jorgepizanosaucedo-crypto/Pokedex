@@ -83,6 +83,29 @@ void main() {
     test('marca la habilidad oculta', () {
       expect(pokemon.abilities.map((a) => a.isHidden), [false, true]);
     });
+
+    test('sin sprite de Showdown se queda sin animación', () {
+      expect(pokemon.animatedUrl, isNull);
+      expect(pokemon.animatedShinyUrl, isNull);
+    });
+
+    test('lee el sprite animado de Showdown', () {
+      final animated = Pokemon.fromJson({
+        ..._bulbasaurJson,
+        'sprites': {
+          'other': {
+            'showdown': {
+              'front_default': 'https://example.test/showdown/1.gif',
+              'front_shiny': 'https://example.test/showdown/shiny/1.gif',
+            },
+          },
+        },
+      });
+      expect(animated.animatedUrl, 'https://example.test/showdown/1.gif');
+      expect(animated.animatedShinyUrl, 'https://example.test/showdown/shiny/1.gif');
+      // Sin arte oficial en la respuesta, se construye la URL a mano.
+      expect(animated.imageUrl, contains('official-artwork/1.png'));
+    });
   });
 
   test('PokemonListItem saca el id de la url', () {

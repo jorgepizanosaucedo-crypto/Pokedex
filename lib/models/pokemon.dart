@@ -59,6 +59,11 @@ class Pokemon {
   final String? cryUrl;
   final int movesCount;
 
+  /// Sprite animado de Pokémon Showdown (GIF en movimiento), normal y shiny.
+  /// Faltan en unos pocos de la novena generación: ahí se queda el arte.
+  final String? animatedUrl;
+  final String? animatedShinyUrl;
+
   const Pokemon({
     required this.id,
     required this.name,
@@ -72,12 +77,15 @@ class Pokemon {
     required this.shinyImageUrl,
     required this.cryUrl,
     required this.movesCount,
+    this.animatedUrl,
+    this.animatedShinyUrl,
   });
 
   factory Pokemon.fromJson(Map<String, dynamic> json) {
     final id = json['id'] as int;
-    final artwork = (json['sprites']?['other']?['official-artwork'] ?? {}) as Map<String, dynamic>;
+    final artwork = json['sprites']?['other']?['official-artwork'] as Map? ?? const {};
     final cries = (json['cries'] ?? {}) as Map<String, dynamic>;
+    final showdown = json['sprites']?['other']?['showdown'] as Map? ?? const {};
     final types = (json['types'] as List).cast<Map<String, dynamic>>().toList()
       ..sort((a, b) => (a['slot'] as int).compareTo(b['slot'] as int));
 
@@ -94,6 +102,8 @@ class Pokemon {
       shinyImageUrl: artwork['front_shiny'] as String? ?? artworkUrl(id, shiny: true),
       cryUrl: (cries['latest'] ?? cries['legacy']) as String?,
       movesCount: (json['moves'] as List?)?.length ?? 0,
+      animatedUrl: showdown['front_default'] as String?,
+      animatedShinyUrl: showdown['front_shiny'] as String?,
     );
   }
 

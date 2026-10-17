@@ -2,6 +2,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
 
 import 'music_service.dart';
+import 'sfx/sfx_engine.dart';
 
 enum Sfx { tap, open, swipe, shiny, start, voice }
 
@@ -15,9 +16,18 @@ class SoundService {
   final List<AudioPlayer> _sfxPool = List.generate(4, (_) => AudioPlayer());
   int _next = 0;
 
+  static String _asset(Sfx sfx) => 'assets/sounds/${sfx.name}.wav';
+
+  /// Deja los efectos listos en memoria (en web; en el resto no hace falta).
+  Future<void> preload() => SfxEngine.preload(Sfx.values.map(_asset));
+
+  /// Se llama en cada toque: el navegador no deja sonar nada hasta entonces.
+  void unlock() => SfxEngine.unlock();
+
   Future<void> play(Sfx sfx, {double volume = 0.6}) async {
     if (!enabled) return;
     if (sfx == Sfx.tap) HapticFeedback.selectionClick();
+    if (SfxEngine.play(_asset(sfx), volume)) return;
     final player = _sfxPool[_next];
     _next = (_next + 1) % _sfxPool.length;
     try {

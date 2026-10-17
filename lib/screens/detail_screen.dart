@@ -11,10 +11,13 @@ import '../services/favorites_store.dart';
 import '../services/karen_controller.dart';
 import '../services/music_service.dart';
 import '../services/pokeapi_service.dart';
+import '../services/profile_store.dart';
+import '../services/settings_store.dart';
 import '../services/sound_service.dart';
 import '../services/type_index.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ambient_background.dart';
+import '../widgets/animated_sprite.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/karen_overlay.dart';
 import '../widgets/pokeball.dart';
@@ -96,6 +99,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 SoundService.instance.play(Sfx.swipe, volume: 0.4);
                 HapticFeedback.selectionClick();
                 setState(() => _index = index);
+                KarenController.instance.onSwipe();
               },
               itemBuilder: (context, index) => _PokemonDetail(
                 key: ValueKey(widget.entries[index].id),
@@ -170,7 +174,14 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     duration: const Duration(milliseconds: 640),
   );
 
+  /// Saludo: dos saltitos al terminar de entrar, como si se presentara.
+  late final AnimationController _hop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
   Timer? _roarTimer;
+  Timer? _tourTimer;
   Pokemon? _pokemon;
   bool _announced = false;
   bool _shiny = false;
@@ -214,6 +225,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
       _activate();
     } else if (!widget.active && old.active) {
       _roarTimer?.cancel();
+      _tourTimer?.cancel();
     }
   }
 
@@ -233,9 +245,11 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
   @override
   void dispose() {
     _roarTimer?.cancel();
+    _tourTimer?.cancel();
     _float.dispose();
     _entrance.dispose();
     _roar.dispose();
+    _hop.dispose();
     super.dispose();
   }
 
@@ -246,8 +260,25 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     if (!widget.active || pokemon == null) return;
 
     _startRoarCycle(pokemon);
+    // Se presenta con un par de saltitos cuando termina de entrar.
+    Future.delayed(const Duration(milliseconds: 650), () {
+      if (mounted && widget.active) _hop.forward(from: 0);
+    });
     if (_announced) return;
     _announced = true;
+
+    // La primera ficha que se abre trae su propia guía.
+    final karen = KarenController.instance;
+    final profile = ProfileStore.instance;
+    final tourPending =
+        karen.enabled && profile.tutorialDone && !profile.detailTourDone && !karen.inTour;
+    if (tourPending) {
+      _tourTimer = Timer(const Duration(milliseconds: 1100), () {
+        if (mounted && widget.active && !karen.inTour) {
+          karen.startTour(kind: KarenTour.detail);
+        }
+      });
+    }
 
     // La especie dice si es legendario, y eso manda sobre el tipo.
     PokeApiService.instance
@@ -258,6 +289,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
           MusicService.instance.switchTo(
             MusicService.trackFor(pokemon.primaryType, legendary: legendary),
           );
+          if (tourPending) return;
           KarenController.instance.onPokemonOpened(
             id: pokemon.id,
             displayName: displayName(pokemon.name),
@@ -283,9 +315,22 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     });
   }
 
-  void _playCry(Pokemon pokemon) {
+  void _playCry(Pokemon pokemon, {bool tapped = false}) {
     _roar.forward(from: 0);
     SoundService.instance.playCry(pokemon.cryUrl);
+    if (tapped) KarenController.instance.onCry(pokemon.id, displayName(pokemon.name));
+  }
+
+  void _toggleAnimated(Pokemon pokemon) {
+    final settings = SettingsStore.instance;
+    final next = !settings.animated;
+    settings.setAnimated(next);
+    SoundService.instance.play(next ? Sfx.open : Sfx.tap, volume: 0.4);
+    HapticFeedback.selectionClick();
+    if (next) {
+      _hop.forward(from: 0);
+      KarenController.instance.onAnimated(pokemon.id, displayName(pokemon.name));
+    }
   }
 
   void _toggleShiny(Pokemon pokemon) {
@@ -314,55 +359,102 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
         final knownType = pokemon?.primaryType ?? TypeIndex.instance.primaryOf(widget.entry.id);
         final color = knownType == null ? const Color(0xFF6C7080) : typeStyle(knownType).color;
 
+        final layout = Layout.of(context);
+        final wide = layout.isWide;
+        // En pantalla ancha el arte tiene su propia columna y puede crecer;
+        // apilado se limita para dejar sitio a la hoja.
+        final artHeight = wide
+            ? math.min(layout.size.height * 0.62, 440.0)
+            : layout.artworkHeight;
+
+        final Widget art;
+        final Widget sheet;
+        if (pokemon == null) {
+          // Lo que ya se sabe desde la lista se pinta al instante: el dibujo
+          // (la miniatura ya está en memoria), el nombre y los tipos. Sólo el
+          // contenido de la hoja espera a la red.
+          art = _ArtworkLoading(id: widget.entry.id, active: widget.active, height: artHeight);
+          sheet = _SheetLoading(entry: widget.entry, wide: wide);
+        } else {
+          art = _Artwork(
+            pokemon: pokemon,
+            active: widget.active,
+            height: artHeight,
+            shiny: _shiny,
+            sparkle: _sparkle,
+            float: _float,
+            entrance: _entrance,
+            roar: _roar,
+            hop: _hop,
+            onToggleShiny: () => _toggleShiny(pokemon),
+            onToggleAnimated: () => _toggleAnimated(pokemon),
+            onCry: () => _playCry(pokemon, tapped: true),
+          );
+          sheet = _InfoSheet(pokemon: pokemon, active: widget.active, wide: wide);
+        }
+
+        final error = snap.hasError && pokemon == null;
+        final topBar = _TopBar(
+          id: widget.entry.id,
+          name: widget.entry.name,
+          hasNext: widget.hasNext,
+          hasPrevious: widget.hasPrevious,
+          active: widget.active,
+        );
+
         return AmbientBackground(
           color: color,
           animate: widget.active,
+          // En un teléfono basta con menos orbes: es un repintado a pantalla
+          // completa por fotograma.
+          orbCount: layout.isCompact ? 6 : 10,
           child: SafeArea(
             bottom: false,
-            child: Column(
-              children: [
-                _TopBar(
-                  id: widget.entry.id,
-                  name: widget.entry.name,
-                  hasNext: widget.hasNext,
-                  hasPrevious: widget.hasPrevious,
-                ),
-                if (snap.hasError && pokemon == null)
-                  Expanded(
-                    child: _DetailError(
-                      message: PokeApiService.friendlyError(snap.error!),
-                      onRetry: () {
-                        setState(
-                          () => _future = PokeApiService.instance.getPokemon(widget.entry.id),
-                        );
-                        _listen();
-                      },
+            child: error
+                ? Column(
+                    children: [
+                      topBar,
+                      Expanded(
+                        child: _DetailError(
+                          message: PokeApiService.friendlyError(snap.error!),
+                          onRetry: () {
+                            setState(
+                              () => _future = PokeApiService.instance.getPokemon(widget.entry.id),
+                            );
+                            _listen();
+                          },
+                        ),
+                      ),
+                    ],
+                  )
+                : wide
+                // Computadora: arte a la izquierda e información a la derecha,
+                // todo dentro de un ancho razonable. Antes la hoja blanca se
+                // estiraba de orilla a orilla del monitor.
+                ? ContentWidth(
+                    maxWidth: kDetailWideMaxWidth,
+                    child: Column(
+                      children: [
+                        topBar,
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(child: Center(child: art)),
+                              SizedBox(
+                                width: 470,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(8, 4, 16, 20),
+                                  child: sheet,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   )
-                else if (pokemon == null) ...[
-                  // Lo que ya se sabe desde la lista se pinta al instante: el
-                  // dibujo (la miniatura ya está en memoria), el nombre y los
-                  // tipos. Sólo el contenido de la hoja espera a la red.
-                  _ArtworkLoading(id: widget.entry.id, active: widget.active),
-                  Expanded(child: _SheetLoading(entry: widget.entry)),
-                ] else ...[
-                  _Artwork(
-                    pokemon: pokemon,
-                    active: widget.active,
-                    shiny: _shiny,
-                    sparkle: _sparkle,
-                    float: _float,
-                    entrance: _entrance,
-                    roar: _roar,
-                    onToggleShiny: () => _toggleShiny(pokemon),
-                    onCry: () => _playCry(pokemon),
-                  ),
-                  Expanded(
-                    child: _InfoSheet(pokemon: pokemon, active: widget.active),
-                  ),
-                ],
-              ],
-            ),
+                : Column(children: [topBar, art, Expanded(child: sheet)]),
           ),
         );
       },
@@ -376,11 +468,15 @@ class _TopBar extends StatelessWidget {
   final bool hasNext;
   final bool hasPrevious;
 
+  /// Sólo la ficha que se está mirando lleva las claves de la guía.
+  final bool active;
+
   const _TopBar({
     required this.id,
     required this.name,
     required this.hasNext,
     required this.hasPrevious,
+    required this.active,
   });
 
   @override
@@ -390,6 +486,7 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            key: KarenTargets.keyIf(active, 'back'),
             tooltip: 'Volver',
             onPressed: () => Navigator.of(context).maybePop(),
             icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
@@ -433,7 +530,7 @@ class _TopBar extends StatelessWidget {
                 ],
               ),
             ),
-          _FavoriteButton(id: id, name: name),
+          _FavoriteButton(key: KarenTargets.keyIf(active, 'fav'), id: id, name: name),
         ],
       ),
     );
@@ -444,7 +541,7 @@ class _FavoriteButton extends StatefulWidget {
   final int id;
   final String name;
 
-  const _FavoriteButton({required this.id, required this.name});
+  const _FavoriteButton({super.key, required this.id, required this.name});
 
   @override
   State<_FavoriteButton> createState() => _FavoriteButtonState();
@@ -466,9 +563,16 @@ class _FavoriteButtonState extends State<_FavoriteButton> with SingleTickerProvi
     final added = FavoritesStore.instance.toggle(widget.id);
     SoundService.instance.play(added ? Sfx.shiny : Sfx.tap, volume: added ? 0.45 : 0.3);
     HapticFeedback.lightImpact();
+    final name = displayName(widget.name);
     if (added) {
       _c.forward(from: 0);
-      KarenController.instance.onFavorite(widget.id, displayName(widget.name));
+      KarenController.instance.onFavorite(
+        widget.id,
+        name,
+        teamSize: FavoritesStore.instance.count,
+      );
+    } else {
+      KarenController.instance.onUnfavorite(widget.id, name);
     }
   }
 
@@ -499,38 +603,63 @@ class _FavoriteButtonState extends State<_FavoriteButton> with SingleTickerProvi
   }
 }
 
-/// Zona superior: arte oficial flotando sobre una pokébola que gira,
-/// con el número de Pokédex en marca de agua y el interruptor shiny.
+/// Zona superior: el Pokémon flotando sobre una pokébola que gira, con el
+/// número de Pokédex en marca de agua y los botones Animado y Shiny.
 ///
-/// El Pokémon entra desde el costado de la ficha a modo de presentación, y
-/// cada tanto se sacude cuando suelta su grito.
+/// El Pokémon está vivo: entra desde el costado y se presenta con dos
+/// saltitos, respira, se lanza hacia delante cuando suelta su grito, y con
+/// "Animado" se ve su sprite de combate en movimiento.
 class _Artwork extends StatelessWidget {
   final Pokemon pokemon;
   final bool active;
+  final double height;
   final bool shiny;
   final int sparkle;
   final AnimationController float;
   final AnimationController entrance;
   final AnimationController roar;
+  final AnimationController hop;
   final VoidCallback onToggleShiny;
+  final VoidCallback onToggleAnimated;
   final VoidCallback onCry;
 
   const _Artwork({
     required this.pokemon,
     required this.active,
+    required this.height,
     required this.shiny,
     required this.sparkle,
     required this.float,
     required this.entrance,
     required this.roar,
+    required this.hop,
     required this.onToggleShiny,
+    required this.onToggleAnimated,
     required this.onCry,
   });
 
   @override
   Widget build(BuildContext context) {
-    final layout = Layout.of(context);
-    final height = layout.artworkHeight;
+    final artSize = height * 0.78;
+    final hasSprite = pokemon.animatedUrl != null;
+
+    // Primero la miniatura que ya está en memoria y encima el original
+    // cuando llega: nunca queda el hueco vacío.
+    final official = Hero(
+      tag: PokemonCard.heroTag(pokemon.id),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 420),
+        child: ArtworkImage(
+          key: ValueKey(shiny),
+          id: pokemon.id,
+          size: artSize,
+          shiny: shiny,
+          tier: ArtTier.full,
+          thumbUnderlay: true,
+          placeholderColor: Colors.white,
+        ),
+      ),
+    );
 
     // En pantallas anchas los controles (grito, shiny) se alinean con la
     // hoja de abajo en vez de irse a las orillas de la ventana.
@@ -548,71 +677,116 @@ class _Artwork extends StatelessWidget {
             ),
             // Número gigante de fondo; se encoge si no cabe (los de cuatro
             // cifras se salían de la pantalla).
-            SizedBox(
-              width: math.min(MediaQuery.sizeOf(context).width, kSheetMaxWidth) - 32,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  pokemon.id.toString().padLeft(3, '0'),
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: height * 0.52,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white.withValues(alpha: 0.11),
-                    letterSpacing: -4,
-                    height: 1,
+            LayoutBuilder(
+              builder: (context, box) => SizedBox(
+                width: math.max(0, box.maxWidth - 32),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    pokemon.id.toString().padLeft(3, '0'),
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: height * 0.52,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white.withValues(alpha: 0.11),
+                      letterSpacing: -4,
+                      height: 1,
+                    ),
                   ),
                 ),
               ),
             ),
             AnimatedBuilder(
-              animation: Listenable.merge([float, entrance, roar]),
+              animation: Listenable.merge([float, entrance, roar, hop]),
               builder: (_, child) {
                 // Entrada: llega desde la derecha, girando un poco al frenar.
                 final e = Curves.easeOutCubic.transform(entrance.value);
                 final slide = (1 - e) * height * 0.9;
                 final tilt = (1 - e) * 0.18;
 
-                // Rugido: sacudida que se apaga, con un golpe de escala.
+                // Respiración: se estira y se encoge muy poco, apoyado en el
+                // suelo.
+                final b = Curves.easeInOut.transform(float.value);
+
+                // Saludo: dos saltitos que se van apagando.
+                final h = hop.value;
+                final jump = h > 0 && h < 1 ? math.sin(h * math.pi * 2).abs() * (1 - h * 0.5) : 0.0;
+
+                // Grito: se lanza hacia delante, salta y se sacude.
                 final r = roar.isAnimating || roar.value > 0 ? roar.value : 0.0;
                 final shake = math.sin(r * math.pi * 7) * (1 - r) * 10;
-                final punch = 1 + math.sin(r * math.pi) * 0.07;
+                final lunge = math.sin(r * math.pi);
+                final grow = (0.82 + 0.18 * e) * (1 + lunge * 0.12);
 
                 return Transform.translate(
-                  offset: Offset(slide + shake, math.sin(float.value * math.pi) * 9 - 4),
+                  offset: Offset(
+                    slide + shake,
+                    math.sin(float.value * math.pi) * 7 - 4 - jump * 22 - lunge * 14,
+                  ),
                   child: Transform.rotate(
                     angle: tilt + shake * 0.004,
-                    child: Transform.scale(scale: punch * (0.82 + 0.18 * e), child: child),
+                    child: Transform.scale(
+                      scaleX: grow * (1 - b * 0.012 + jump * 0.03),
+                      scaleY: grow * (1 + b * 0.022 - jump * 0.02),
+                      alignment: Alignment.bottomCenter,
+                      child: child,
+                    ),
                   ),
                 );
               },
               child: GestureDetector(
+                key: KarenTargets.keyIf(active, 'art'),
                 onTap: onCry,
-                child: Hero(
-                  tag: PokemonCard.heroTag(pokemon.id),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 420),
-                    // Primero la miniatura que ya está en memoria y encima el
-                    // original cuando llega: nunca queda el hueco vacío.
-                    child: ArtworkImage(
-                      key: ValueKey(shiny),
-                      id: pokemon.id,
-                      size: height * 0.78,
-                      shiny: shiny,
-                      tier: ArtTier.full,
-                      thumbUnderlay: true,
-                      placeholderColor: Colors.white,
-                    ),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: ListenableBuilder(
+                    listenable: SettingsStore.instance,
+                    builder: (context, _) => SettingsStore.instance.animated && hasSprite
+                        ? AnimatedSprite(
+                            key: ValueKey('sprite-$shiny'),
+                            url: shiny ? pokemon.animatedShinyUrl : pokemon.animatedUrl,
+                            size: artSize,
+                            fallback: official,
+                          )
+                        : official,
                   ),
                 ),
               ),
             ),
             SparkleBurst(trigger: sparkle),
-            // Interruptor shiny.
+            // Animado y Shiny.
             Positioned(
               right: 16,
               bottom: 4,
-              child: _ShinyToggle(active: shiny, onTap: onToggleShiny),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasSprite) ...[
+                    ListenableBuilder(
+                      listenable: SettingsStore.instance,
+                      builder: (context, _) => _PillToggle(
+                        key: KarenTargets.keyIf(active, 'anim'),
+                        label: 'Animado',
+                        icon: Icons.directions_run_rounded,
+                        active: SettingsStore.instance.animated,
+                        activeColor: Colors.white,
+                        activeInk: AppColors.ink,
+                        onTap: onToggleAnimated,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  _PillToggle(
+                    key: KarenTargets.keyIf(active, 'shiny'),
+                    label: 'Shiny',
+                    icon: Icons.auto_awesome_rounded,
+                    active: shiny,
+                    activeColor: const Color(0xFFFFD54F),
+                    activeInk: const Color(0xFF6B4E00),
+                    onTap: onToggleShiny,
+                  ),
+                ],
+              ),
             ),
             if (pokemon.cryUrl != null)
               Positioned(
@@ -627,7 +801,7 @@ class _Artwork extends StatelessWidget {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      'Toca para oír su grito',
+                      'Tócalo para oír su grito',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.75),
                         fontSize: 11.5,
@@ -650,11 +824,12 @@ class _ArtworkLoading extends StatelessWidget {
   final int id;
   final bool active;
 
-  const _ArtworkLoading({required this.id, required this.active});
+  final double height;
+
+  const _ArtworkLoading({required this.id, required this.active, required this.height});
 
   @override
   Widget build(BuildContext context) {
-    final height = Layout.of(context).artworkHeight;
     return SizedBox(
       height: height,
       child: Stack(
@@ -684,18 +859,15 @@ class _ArtworkLoading extends StatelessWidget {
 /// Hoja blanca mientras llega la ficha: nombre y tipos ya se conocen.
 class _SheetLoading extends StatelessWidget {
   final PokemonListItem entry;
+  final bool wide;
 
-  const _SheetLoading({required this.entry});
+  const _SheetLoading({required this.entry, required this.wide});
 
   @override
   Widget build(BuildContext context) {
     final types = TypeIndex.instance.typesOf(entry.id) ?? const <String>[];
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-        boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 20, offset: Offset(0, -5))],
-      ),
+      decoration: _sheetDecoration(wide),
       child: ContentWidth(
         maxWidth: kSheetMaxWidth,
         child: Column(
@@ -754,44 +926,66 @@ class _SheetLoading extends StatelessWidget {
   }
 }
 
-class _ShinyToggle extends StatelessWidget {
+/// Botón con forma de píldora sobre el arte (Animado, Shiny).
+class _PillToggle extends StatelessWidget {
+  final String label;
+  final IconData icon;
   final bool active;
+  final Color activeColor;
+  final Color activeInk;
   final VoidCallback onTap;
 
-  const _ShinyToggle({required this.active, required this.onTap});
+  const _PillToggle({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.active,
+    required this.activeColor,
+    required this.activeInk,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFFFFD54F) : Colors.white.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: active ? 0 : 0.35)),
-          boxShadow: active
-              ? [const BoxShadow(color: Color(0x66FFD54F), blurRadius: 16, offset: Offset(0, 4))]
-              : null,
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.auto_awesome_rounded,
-              size: 15,
-              color: active ? const Color(0xFF6B4E00) : Colors.white,
+    return Semantics(
+      button: true,
+      toggled: active,
+      child: GestureDetector(
+        onTap: onTap,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: active ? activeColor : Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withValues(alpha: active ? 0 : 0.35)),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: activeColor.withValues(alpha: 0.4),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : null,
             ),
-            const SizedBox(width: 6),
-            Text(
-              'Shiny',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: active ? const Color(0xFF6B4E00) : Colors.white,
-              ),
+            child: Row(
+              children: [
+                Icon(icon, size: 15, color: active ? activeInk : Colors.white),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: active ? activeInk : Colors.white,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -799,11 +993,22 @@ class _ShinyToggle extends StatelessWidget {
 }
 
 /// Hoja blanca inferior con nombre, tipos y las tres pestañas de contenido.
+/// La hoja blanca: pegada abajo en el teléfono, y en pantalla ancha una
+/// tarjeta flotante con todas las esquinas redondeadas.
+BoxDecoration _sheetDecoration(bool wide) => BoxDecoration(
+  color: AppColors.surface,
+  borderRadius: wide
+      ? BorderRadius.circular(26)
+      : const BorderRadius.vertical(top: Radius.circular(26)),
+  boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 20, offset: Offset(0, -5))],
+);
+
 class _InfoSheet extends StatelessWidget {
   final Pokemon pokemon;
   final bool active;
+  final bool wide;
 
-  const _InfoSheet({required this.pokemon, required this.active});
+  const _InfoSheet({required this.pokemon, required this.active, required this.wide});
 
   @override
   Widget build(BuildContext context) {
@@ -811,11 +1016,8 @@ class _InfoSheet extends StatelessWidget {
     final accent = readableOn(color);
 
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-      ),
+      decoration: _sheetDecoration(wide),
+      clipBehavior: wide ? Clip.antiAlias : Clip.none,
       child: ContentWidth(
         maxWidth: kSheetMaxWidth,
         child: DefaultTabController(
@@ -867,6 +1069,7 @@ class _InfoSheet extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               TabBar(
+                key: KarenTargets.keyIf(active, 'tabs'),
                 indicator: UnderlineTabIndicator(
                   borderSide: BorderSide(width: 3, color: accent),
                   borderRadius: BorderRadius.circular(3),
@@ -889,7 +1092,10 @@ class _InfoSheet extends StatelessWidget {
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
-                onTap: (_) => SoundService.instance.play(Sfx.tap, volume: 0.3),
+                onTap: (index) {
+                  SoundService.instance.play(Sfx.tap, volume: 0.3);
+                  KarenController.instance.onTab(index);
+                },
                 tabs: const [
                   Tab(text: 'Datos'),
                   Tab(text: 'Stats'),
