@@ -50,13 +50,18 @@ class TrainerAvatar extends StatelessWidget {
                 ),
               ],
       ),
-      clipBehavior: Clip.antiAlias,
+      // La foto se recorta al círculo de dentro del aro. Antes se recortaba al
+      // de fuera: la foto, cuadrada, tapaba el aro rojo por las esquinas.
       child: photo != null
-          ? Image.memory(
-              photo!,
-              fit: BoxFit.cover,
-              filterQuality: FilterQuality.medium,
-              gaplessPlayback: true,
+          ? ClipOval(
+              child: SizedBox.expand(
+                child: Image.memory(
+                  photo!,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.medium,
+                  gaplessPlayback: true,
+                ),
+              ),
             )
           : Center(
               child: Text(
