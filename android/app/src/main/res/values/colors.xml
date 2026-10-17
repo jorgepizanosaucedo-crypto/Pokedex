@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mismo fondo que el splash: así no hay destello blanco al abrir. -->
+    <color name="app_background">#14151E</color>
+</resources>

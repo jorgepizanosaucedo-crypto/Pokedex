@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <!--
+    Si la app se sirve en una subcarpeta, `flutter build web --base-href /carpeta/`
+    reemplaza este valor.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Pokédex nacional con datos en vivo de la PokeAPI: estadísticas, evoluciones, gritos y variocolor.">
+  <meta name="theme-color" content="#14151E">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Pokédex">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <!-- Abre la conexión con la API y con el servidor de imágenes mientras
+       carga el motor: la primera petición se ahorra el saludo TLS. -->
+  <link rel="preconnect" href="https://pokeapi.co" crossorigin>
+  <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
+
+  <title>Pokédex</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    :root { color-scheme: dark; --bg: #14151E; --muted: rgba(255,255,255,.55); --red: #E3350D; --line: rgba(255,255,255,.12); }
+    html, body { margin: 0; height: 100%; background: var(--bg); }
+    /* Mientras baja el motor de Flutter se ve el fondo oscuro del splash con
+       un aviso discreto, no una página en blanco. */
+    #loading {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+      transition: opacity .3s ease;
+    }
+    #loading.done { opacity: 0; }
+    #loading .ring {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid var(--line); border-top-color: var(--red);
+      animation: spin .9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #loading .ring { animation-duration: 3s; } }
+  </style>
+</head>
+<body>
+  <div id="loading" role="status">
+    <div class="ring" aria-hidden="true"></div>
+    <span>Cargando la Pokédex…</span>
+  </div>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
