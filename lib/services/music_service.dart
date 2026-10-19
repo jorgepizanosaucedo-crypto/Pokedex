@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/widgets.dart';
 
+import 'sfx/sfx_engine.dart';
+
 /// Temas de ambiente en bucle, con su propio interruptor independiente de los
 /// efectos de sonido.
 ///
@@ -51,10 +53,19 @@ class MusicService with WidgetsBindingObserver {
   Timer? _fade;
   Timer? _unduck;
 
+  /// La app se ve (pestaña visible, ventana activa).
+  bool _visible = true;
+
+  /// Pista que tocaba poner mientras la app estaba oculta: se pone al volver.
+  String? _switchOnReturn;
+
   bool get enabled => _enabled;
   String get track => _track;
 
-  void init() => WidgetsBinding.instance.addObserver(this);
+  void init() {
+    WidgetsBinding.instance.addObserver(this);
+    SfxEngine.watchVisibility(_setVisible);
+  }
 
   /// Arranca la música la primera vez que se puede.
   ///
@@ -62,7 +73,7 @@ class MusicService with WidgetsBindingObserver {
   /// interactúa con la página, así que esto se llama también en cada toque:
   /// si el intento falla se deja listo para volver a probar en el siguiente.
   Future<void> ensureStarted() async {
-    if (_started || !_enabled) return;
+    if (_started || !_enabled || !_visible) return;
     _started = true;
     try {
       await _player.setReleaseMode(ReleaseMode.loop);
@@ -80,22 +91,39 @@ class MusicService with WidgetsBindingObserver {
     _track = track;
     if (!_enabled) return;
     if (!_started) return ensureStarted();
+    // Con la app oculta no se arranca nada: el cambio espera a que vuelva.
+    if (!_visible) {
+      _switchOnReturn = track;
+      return;
+    }
 
     _pending = track;
     _fadeTo(0, const Duration(milliseconds: 420));
     // Esperamos a que se apague antes de cambiar de archivo: si durante ese
     // rato llega otro cambio, sólo se aplica el último.
-    Timer(const Duration(milliseconds: 440), () async {
+    Timer(const Duration(milliseconds: 440), () {
       if (_pending != track) return;
       _pending = null;
-      try {
-        await _player.stop();
-        await _player.setReleaseMode(ReleaseMode.loop);
-        await _player.play(AssetSource('music/$track.mp3'), volume: 0);
-        _volume = 0;
-        _fadeTo(_baseVolume, const Duration(milliseconds: 1100));
-      } catch (_) {}
+      if (!_visible) {
+        _switchOnReturn = track;
+        return;
+      }
+      _restart(track);
     });
+  }
+
+  Future<void> _restart(String track) async {
+    try {
+      await _player.stop();
+      await _player.setReleaseMode(ReleaseMode.loop);
+      await _player.play(AssetSource('music/$track.mp3'), volume: 0);
+      _volume = 0;
+      if (!_visible) {
+        await _player.pause();
+        return;
+      }
+      _fadeTo(_baseVolume, const Duration(milliseconds: 1100));
+    } catch (_) {}
   }
 
   /// Vuelve al tema del mapa (al salir de una ficha).
@@ -145,14 +173,28 @@ class MusicService with WidgetsBindingObserver {
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void didChangeAppLifecycleState(AppLifecycleState state) =>
+      _setVisible(state == AppLifecycleState.resumed);
+
+  /// Con la app oculta la música se pausa; al volver sigue, o cambia a la
+  /// pista que tocaba si mientras tanto se pidió otra.
+  void _setVisible(bool visible) {
+    if (visible == _visible) return;
+    _visible = visible;
     if (!_enabled || !_started) return;
-    try {
-      if (state == AppLifecycleState.resumed) {
-        _player.resume();
-      } else {
-        _player.pause();
-      }
-    } catch (_) {}
+    if (!visible) {
+      _fade?.cancel();
+      _unduck?.cancel();
+      _player.pause().catchError((Object _) {});
+      return;
+    }
+    final next = _switchOnReturn;
+    _switchOnReturn = null;
+    if (next != null) {
+      _restart(next);
+    } else {
+      _player.resume().catchError((Object _) {});
+      _fadeTo(_baseVolume, const Duration(milliseconds: 600));
+    }
   }
 }

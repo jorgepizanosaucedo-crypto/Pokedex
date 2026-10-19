@@ -1207,6 +1207,13 @@ const List<KarenStep> _newFeatureTips = [
     emote: KarenEmote.thought,
     companions: [149],
   ),
+  KarenStep(
+    'En el combate, "Cambiar movimientos" te deja elegir entre todos los que '
+    'aprende en el juego: por nivel, MT, huevo o tutor. Nada de trampas.',
+    mood: KarenMood.point,
+    emote: KarenEmote.idea,
+    companions: [6],
+  ),
 ];
 
 const List<KarenStep> _battleWonLines = [
@@ -1247,5 +1254,230 @@ const List<KarenStep> _battleFledLines = [
     'Huir también es estrategia. Te espero cuando quieras la revancha.',
     mood: KarenMood.wave,
     emote: KarenEmote.heart,
+  ),
+];
+
+// ------------------------------------------------------------------ memes
+
+/// Memes y bromas de la comunidad sobre Pokémon concretos. Salen al abrir su
+/// ficha, una vez por sesión (si también tiene dato curioso, se turnan).
+const Map<int, KarenStep> _memeByPokemon = {
+  1: KarenStep(
+    'Bulbasaur: el inicial que todos subestiman y que se pasa los dos primeros '
+    'gimnasios él solito. Respeten al sapito.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.heart,
+  ),
+  6: KarenStep(
+    'Charizard se pasó media serie ignorando a Ash. Respeto a quien sabe '
+    'poner límites.',
+    mood: KarenMood.think,
+    emote: KarenEmote.sweat,
+  ),
+  7: KarenStep(
+    'El Escuadrón Squirtle, con sus lentes oscuros, es lo más cool que ha '
+    'pasado en el anime. No acepto otra opinión.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.sparkle,
+  ),
+  25: KarenStep(
+    'Esta es mi cara cuando el Pokémon que acabo de debilitar era justo el que '
+    'quería capturar: *cara de Pikachu sorprendido*.',
+    mood: KarenMood.surprise,
+    emote: KarenEmote.exclaim,
+  ),
+  39: KarenStep(
+    'Regla de oro: si te duermes durante la canción de Jigglypuff, te pinta la '
+    'cara con plumón. Quedas advertido.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+  41: KarenStep(
+    '¿Entraste a una cueva? Felicidades: hay cuarenta Zubat esperándote. Lleva '
+    'repelente. Mucho repelente.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+  50: KarenStep(
+    'Pregunta seria: ¿qué hay debajo de Diglett? Nadie lo sabe. Y es mejor '
+    'que siga así.',
+    mood: KarenMood.think,
+    emote: KarenEmote.question,
+  ),
+  52: KarenStep(
+    'Meowth habla como persona, camina en dos patas y aun así no le alcanza '
+    'la quincena. Lo entiendo perfecto.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.sweat,
+  ),
+  54: KarenStep(
+    'Psyduck con dolor de cabeza soy yo un lunes a las siete de la mañana.',
+    mood: KarenMood.sleepy,
+    emote: KarenEmote.sweat,
+  ),
+  67: KarenStep(
+    'Pokémon número sesenta y siete… six seven. *hace las manitas* Perdón, '
+    'tenía que decirlo.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.exclaim,
+  ),
+  79: KarenStep(
+    'Slowpoke se acaba de enterar de la noticia que te conté la semana pasada.',
+    mood: KarenMood.sleepy,
+    emote: KarenEmote.thought,
+  ),
+  94: KarenStep(
+    'Teoría de fans: Gengar es la sombra de Clefable. Pon sus siluetas lado a '
+    'lado y dime que no.',
+    mood: KarenMood.think,
+    emote: KarenEmote.idea,
+    companions: [94, 36],
+  ),
+  113: KarenStep(
+    'Chansey le regala su huevo a quien está herido. La Enfermera Joy no '
+    'trabaja sola: tiene a la mejor compañera.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.heart,
+  ),
+  129: KarenStep(
+    '¡Magikarp usó Salpicadura! …Pero no pasó nada. Paciencia: un día se vuelve '
+    'Gyarados y te pide perdón con Hiperrayo.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.sweat,
+    companions: [129, 130],
+  ),
+  132: KarenStep(
+    'Ditto puede copiar a cualquier Pokémon, menos su carita. Esa se la deja '
+    'siempre. Icónico.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.heart,
+  ),
+  134: KarenStep(
+    '¿Sabías que, en términos de compatibilidad, Vaporeon es…? No. No voy a '
+    'terminar esa frase. Internet ya hizo suficiente daño con ella.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+  143: KarenStep(
+    'Un Snorlax salvaje bloquea el camino. Necesitas la Poké Flauta… o tener '
+    'menos prisa que él, que ya es mucho decir.',
+    mood: KarenMood.sleepy,
+    emote: KarenEmote.zzz,
+  ),
+  151: KarenStep(
+    'Cuenta la leyenda que Mew estaba debajo del camión junto al S.S. Anne. '
+    'Toda una generación lo empujó con Fuerza. Yo también, no me juzgues.',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+  ),
+  185: KarenStep(
+    'Sudowoodo parece árbol, pero es tipo Roca. Si lo riegas se ofende.',
+    mood: KarenMood.point,
+    emote: KarenEmote.sweat,
+  ),
+  202: KarenStep(
+    '¡Wobbuffet! …Perdón, se me salió. Es contagioso.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.exclaim,
+  ),
+  399: KarenStep(
+    'Bidoof. Simple. Humilde. Aprende Golpe Roca, Fuerza y Surf. Hay quien dice '
+    'que es un dios. Yo no digo que no.',
+    mood: KarenMood.point,
+    emote: KarenEmote.sparkle,
+  ),
+  778: KarenStep(
+    'Mimikyu se disfraza de Pikachu para que lo quieran. Mimikyu, aquí te '
+    'queremos así como eres.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.heart,
+    companions: [778, 25],
+  ),
+};
+
+/// Al pasar de Charizard (#006) a Squirtle (#007).
+const KarenStep _sixSeven = KarenStep(
+  'Charizard es el 6, Squirtle el 7… six… seven. *hace las manitas* Ya, ya me '
+  'calmo.',
+  mood: KarenMood.cheer,
+  emote: KarenEmote.exclaim,
+  companions: [6, 7],
+);
+
+/// Memes sueltos: salen como consejo cuando te quedas quieto y, cada tanto,
+/// al deslizar entre fichas.
+const List<KarenStep> _memeLines = [
+  KarenStep(
+    'Dato inútil: Ash tuvo diez años durante más de veinticinco años. Quiero '
+    'su crema para la cara.',
+    mood: KarenMood.think,
+    emote: KarenEmote.thought,
+    companions: [25],
+  ),
+  KarenStep(
+    'Las Pokébolas guardan un Snorlax de 460 kilos y caben en un bolsillo. La '
+    'física nos debe una explicación.',
+    mood: KarenMood.think,
+    emote: KarenEmote.question,
+    companions: [143],
+  ),
+  KarenStep(
+    'El Profesor Oak no se acordaba del nombre de su propio nieto. Yo me sé '
+    'los 1025 Pokémon. Sólo digo.',
+    mood: KarenMood.point,
+    emote: KarenEmote.sparkle,
+  ),
+  KarenStep(
+    'Mi estrategia secreta: usar el ataque que dice "súper eficaz" hasta que '
+    'deje de decirlo.',
+    mood: KarenMood.cheer,
+    emote: KarenEmote.idea,
+  ),
+  KarenStep(
+    'Buscar un shiny: una probabilidad entre 4096. O como yo le digo: "nomás '
+    'otro ratito y ya me duermo".',
+    mood: KarenMood.sleepy,
+    emote: KarenEmote.zzz,
+  ),
+  KarenStep(
+    'MissingNo. no está en esta Pokédex. Y mejor así: le hace cosas raras a tu '
+    'mochila.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+  ),
+  KarenStep(
+    'Si dices "six seven" tres veces frente al espejo aparece Machoke. Es el '
+    'número 67. Búscalo y compruébalo.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.exclaim,
+    companions: [67],
+  ),
+  KarenStep(
+    'El Team Rocket lleva desde 1997 despegando de nuevo y todavía no aterriza. '
+    'Eso sí es constancia.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.sparkle,
+    companions: [52],
+  ),
+  KarenStep(
+    'Una vez llevé un Magikarp en mi equipo hasta el nivel 20. Fueron los '
+    'veinte niveles más largos de mi vida.',
+    mood: KarenMood.worry,
+    emote: KarenEmote.sweat,
+    companions: [129, 130],
+  ),
+  KarenStep(
+    '¿Por qué todas las Enfermeras Joy se parecen tanto? El misterio más grande '
+    'de toda la región Kanto.',
+    mood: KarenMood.think,
+    emote: KarenEmote.question,
+    companions: [113],
+  ),
+  KarenStep(
+    'Pikachu se niega a entrar en su Pokébola desde 1997. Primer Pokémon con '
+    'derecho a la libertad de expresión.',
+    mood: KarenMood.happy,
+    emote: KarenEmote.heart,
+    companions: [25],
   ),
 ];

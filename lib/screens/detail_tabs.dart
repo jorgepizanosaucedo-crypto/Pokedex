@@ -224,7 +224,7 @@ class _AbilityChip extends StatelessWidget {
   const _AbilityChip({required this.ability, required this.accent});
 
   void _open(BuildContext context) {
-    SoundService.instance.play(Sfx.tap, volume: 0.3);
+    SoundService.instance.play(Sfx.sheetUp, volume: 0.4);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -525,7 +525,7 @@ class _MovesTabState extends State<_MovesTab> {
                         side: BorderSide(color: m == method ? widget.accent : AppColors.line),
                         visualDensity: VisualDensity.compact,
                         onSelected: (_) {
-                          SoundService.instance.play(Sfx.tap, volume: 0.3);
+                          SoundService.instance.play(Sfx.chip, volume: 0.36);
                           setState(() => _method = m);
                         },
                       ),
@@ -533,6 +533,17 @@ class _MovesTabState extends State<_MovesTab> {
                 ],
               ),
             ),
+            if (versionLabel(all.first.version).isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 6, 18, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Según Pokémon ${versionLabel(all.first.version)}',
+                    style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+                  ),
+                ),
+              ),
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 24),
@@ -636,7 +647,7 @@ class _MoveRow extends StatelessWidget {
 }
 
 void _showMove(BuildContext context, MoveInfo m, Color accent) {
-  SoundService.instance.play(Sfx.tap, volume: 0.3);
+  SoundService.instance.play(Sfx.sheetUp, volume: 0.4);
   Widget stat(String label, String value) => Expanded(
     child: Column(
       children: [

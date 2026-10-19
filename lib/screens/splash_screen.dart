@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../services/account.dart';
+import '../services/cloud_sync.dart';
 import '../services/favorites_store.dart';
 import '../services/pokeapi_service.dart';
 import '../services/profile_store.dart';
@@ -74,9 +76,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    // Mientras corre la animación se cargan los datos guardados; para cuando
-    // termina ya sabemos si hay que registrar al entrenador o no.
-    _ready = Future.wait([FavoritesStore.instance.load(), ProfileStore.instance.load()]);
+    // Mientras corre la animación se cargan los datos guardados y se mira si
+    // hay una sesión abierta; para cuando termina ya sabemos a dónde ir.
+    _ready = _prepare();
     // Se adelanta la red: la lista y los tipos empiezan a llegar mientras
     // corre la animación, así la Pokédex aparece ya cargada.
     PokeApiService.instance.getPokemonList().then((_) {}, onError: (Object _) {});
@@ -89,6 +91,25 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
       });
     } else {
       _open();
+    }
+  }
+
+  Future<void> _prepare() async {
+    await Future.wait([FavoritesStore.instance.load(), ProfileStore.instance.load()]);
+    final user = await Account.restore();
+    if (user == null) return;
+    // Con sesión abierta, la cuenta se sincroniza por detrás. Sólo se espera
+    // si el dispositivo no tiene el perfil (se borró, o es otro teléfono).
+    final sync = CloudSync.instance.start(user.uid);
+    final profile = ProfileStore.instance;
+    if (profile.isRegistered) return;
+    await sync.timeout(const Duration(seconds: 6), onTimeout: () {});
+    if (!profile.isRegistered) {
+      await profile.save(
+        name: user.displayName ?? user.email?.split('@').first ?? 'Entrenador',
+        favoriteType: profile.favoriteType,
+        updatePhoto: false,
+      );
     }
   }
 

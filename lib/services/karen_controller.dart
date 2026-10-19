@@ -126,8 +126,12 @@ class KarenController extends ChangeNotifier {
 
   /// Lo que ya comentó en esta sesión, para no repetirse.
   final Set<int> _triviaSaid = {};
+  final Set<int> _memesSaid = {};
   final Set<String> _onceSaid = {};
   int _swipes = 0;
+
+  /// La última ficha abierta, para las bromas que dependen del orden.
+  int? _lastOpened;
 
   // Guía paso a paso.
   List<KarenStep> _tour = const [];
@@ -135,8 +139,9 @@ class KarenController extends ChangeNotifier {
   int _tourIndex = 0;
   VoidCallback? _onTourDone;
 
-  /// Consejos de siempre y los de las funciones nuevas, en la misma baraja.
-  static final List<KarenStep> _allTips = [..._tips, ..._newFeatureTips];
+  /// Consejos de siempre, los de las funciones nuevas y los memes, en la
+  /// misma baraja.
+  static final List<KarenStep> _allTips = [..._tips, ..._newFeatureTips, ..._memeLines];
 
   /// Mientras Karen está dentro del combate no aparece encima de todo.
   int _suppressed = 0;
@@ -204,8 +209,10 @@ class KarenController extends ChangeNotifier {
     _line = null;
     _lastSpoke = DateTime.fromMillisecondsSinceEpoch(0);
     _triviaSaid.clear();
+    _memesSaid.clear();
     _onceSaid.clear();
     _swipes = 0;
+    _lastOpened = null;
     notifyListeners();
   }
 
@@ -313,8 +320,25 @@ class KarenController extends ChangeNotifier {
   }) {
     KarenStep fill(KarenStep s) => s.fill(name: displayName, total: total, companions: [id]);
 
-    // Un dato propio de ese Pokémon manda sobre lo demás, una vez por sesión.
+    // Del 6 al 7 deslizando: no se puede dejar pasar.
+    final previous = _lastOpened;
+    _lastOpened = id;
+    if (previous == 6 && id == 7 && !_onceSaid.contains('six-seven')) {
+      final said = announce(_sixSeven, hold: const Duration(seconds: 6));
+      if (said) _onceSaid.add('six-seven');
+      return said;
+    }
+
+    // Un meme o un dato propio de ese Pokémon mandan sobre lo demás, una vez
+    // por sesión cada uno. Si tiene los dos, se turnan.
     final trivia = _trivia[id];
+    final meme = _memeByPokemon[id];
+    final triviaLeft = trivia != null && !_triviaSaid.contains(id);
+    if (meme != null && !_memesSaid.contains(id) && (!triviaLeft || _random.nextBool())) {
+      final said = _say(fill(meme));
+      if (said) _memesSaid.add(id);
+      return said;
+    }
     if (trivia != null && !_triviaSaid.contains(id)) {
       final said = _say(fill(trivia));
       if (said) _triviaSaid.add(id);
@@ -390,7 +414,8 @@ class KarenController extends ChangeNotifier {
   bool onSwipe() {
     _swipes++;
     if (_swipes % 8 != 0) return false;
-    return _say(_pick('swipe', _swipeLines));
+    // Una de cada dos veces, un meme en lugar del comentario de siempre.
+    return _say(_swipes % 16 == 0 ? _pick('memes', _memeLines) : _pick('swipe', _swipeLines));
   }
 
   /// La primera vez que abre cada pestaña de la ficha.

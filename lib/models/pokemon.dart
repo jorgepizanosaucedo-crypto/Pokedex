@@ -59,11 +59,15 @@ class PokemonMoveRef {
   final LearnMethod method;
   final int level;
 
+  /// Grupo de versiones de la PokeAPI del que sale ("scarlet-violet").
+  final String version;
+
   const PokemonMoveRef({
     required this.name,
     required this.url,
     required this.method,
     this.level = 0,
+    this.version = '',
   });
 }
 
@@ -109,10 +113,15 @@ List<PokemonMoveRef> _parseMoves(List? raw) {
   if (raw == null) return const [];
   final entries = raw.whereType<Map>().where((m) => m['move'] is Map).toList();
   var best = _versionRank.length + 1;
+  var bestName = '';
   for (final m in entries) {
     for (final d in (m['version_group_details'] as List? ?? const []).whereType<Map>()) {
-      final r = _rankOf(d['version_group']?['name'] as String? ?? '');
-      if (r < best) best = r;
+      final name = d['version_group']?['name'] as String? ?? '';
+      final r = _rankOf(name);
+      if (r < best) {
+        best = r;
+        bestName = name;
+      }
     }
   }
   final out = <PokemonMoveRef>[];
@@ -136,6 +145,7 @@ List<PokemonMoveRef> _parseMoves(List? raw) {
           url: move['url'] as String,
           method: method,
           level: d['level_learned_at'] as int? ?? 0,
+          version: bestName,
         ),
       );
     }

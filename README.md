@@ -50,11 +50,12 @@
 - **Pokédex nacional completa:** los 1025 Pokémon con buscador por nombre o número (el número exacto sale primero), filtro por los 18 tipos y tu equipo de favoritos guardado en el dispositivo.
 - **Filtros:** por generación (de Kanto a Paldea), monotipo o doble tipo, categoría (iniciales, legendarios, singulares, pseudolegendarios, ultraentes, paradoja, bebés, fósiles) y orden por número o nombre. También lista las variantes: formas regionales, megaevoluciones, gigamax y otras formas.
 - **Formas:** cada ficha muestra las formas de su especie y se transforma al tocarlas: megas, gigamax, Primigenio, formas regionales, Giratina, Dialga y Palkia Origen, los 18 tipos de Arceus… Los Pokémon paradoja enlazan con su pariente (Raikou ↔ Electrofuria).
-- **Combate contra Karen:** el Pokémon usa cuatro de sus movimientos reales, cada tipo con su propio efecto animado. El daño se calcula como en los juegos (nivel 50, STAB, tabla de tipos, críticos). Karen se disfraza de un tipo, recibe los golpes con humor, se quema, se duerme o se confunde, y contesta con ataques de broma.
+- **Combate contra Karen:** fiel al juego. El Pokémon llega con los movimientos que de verdad sabría a nivel 50 (los últimos cuatro que aprende subiendo de nivel en el juego más reciente donde sale, como un Pokémon salvaje), y con **Cambiar movimientos** eliges entre todos los que aprende: por nivel, MT, huevo o tutor, nunca uno que no pueda aprender. El daño se calcula como en los juegos (nivel 50, STAB, tabla de tipos, críticos), con daño fijo, fulminantes y potencias variables. Karen se disfraza de un tipo, recibe los golpes con humor, se quema, se duerme o se confunde, y contesta con ataques de broma.
+- **Cuentas de entrenador (Firebase):** crea tu cuenta con correo y contraseña, o inicia sesión; tu perfil, tu foto y tu equipo se guardan en Cloud Firestore y te siguen a cualquier dispositivo, en tiempo real. Si olvidas la contraseña, te llega un correo para cambiarla. También se puede entrar sin cuenta.
 - **Fichas vivas:** al abrir un Pokémon entra desde el costado y se presenta con un par de saltitos, respira, y al tocarlo suelta su grito real mientras se lanza hacia delante. Con **Animado** lo ves moverse con su sprite de combate, y con **Shiny** en su variocolor.
 - **Todo lo que dice la PokeAPI:** descripción en español, medidas, cría (género, grupo huevo, eclosión, crecimiento), habilidades con su descripción, radar de estadísticas, tabla de debilidades, todos los movimientos que aprende y la cadena evolutiva explicada en frases ("Eevee evoluciona en Vaporeon al usarle una Piedra agua"), con el dibujo del objeto y cómo se consigue cada mega o gigamax.
-- **Karen, la mascota:** te guía la primera vez, paso a paso, iluminando cada parte de la pantalla y cambiándose de lado para no taparla. Al abrir tu primer Pokémon te explica la ficha con otra guía. Luego comenta lo que haces con más de 200 frases: saludos según la hora, datos curiosos de 48 Pokémon, comentarios por tipo, reacciones a tus favoritos, al shiny, a los filtros y a las búsquedas sin resultado.
-- **Música y sonido:** un tema por ambiente que cambia con el tipo del Pokémon (los legendarios tienen el suyo), efectos de interfaz y la vocecita de Karen.
+- **Karen, la mascota:** te guía la primera vez, paso a paso, iluminando cada parte de la pantalla y cambiándose de lado para no taparla. Al abrir tu primer Pokémon te explica la ficha con otra guía. Luego comenta lo que haces con más de 250 frases: saludos según la hora, datos curiosos de 48 Pokémon, memes de la comunidad (Vaporeon, six seven, Pikachu sorprendido, Mew bajo el camión, Magikarp…), comentarios por tipo, reacciones a tus favoritos, al shiny, a los filtros y a las búsquedas sin resultado.
+- **Música y sonido:** un tema por ambiente que cambia con el tipo del Pokémon (los legendarios tienen el suyo), la vocecita de Karen y un sonido distinto para cada cosa: tarjetas, filtros, favoritos, pestañas, el dado, las formas, la megaevolución, el login… Y al abrir una ficha, cada uno de los 18 tipos suena a lo suyo: chisporroteo de fuego, burbujas de agua, zumbido de bicho.
 - **Hecha a la medida:** en el teléfono, todo apilado y a mano; en la computadora, cuadrícula compacta y la ficha en dos columnas.
 
 ## Cómo está hecho
@@ -122,6 +123,7 @@ segunda apertura la Pokédex aparece al instante, sin esperar a la red.
 lib/
 ├── main.dart                     punto de entrada, tema y montaje de Karen
 ├── models/pokemon.dart           Pokemon, PokemonSpecies, EvolutionStep…
+├── data/moveset.dart             movimientos fieles al juego para el combate
 ├── services/
 │   ├── pokeapi_service.dart      cliente Dio + caché + errores legibles
 │   ├── sound_service.dart        efectos de interfaz y gritos
@@ -129,6 +131,8 @@ lib/
 │   ├── music_service.dart        temas por tipo, fundidos y ciclo de vida
 │   ├── karen_controller.dart     qué dice la mascota, cuándo, y sus dos guías
 │   ├── karen_lines.dart          el repertorio de frases de Karen
+│   ├── account.dart              cuenta de Firebase: crear, entrar, recuperar contraseña
+│   ├── cloud_sync.dart           perfil y equipo en Cloud Firestore, en tiempo real
 │   ├── profile_store.dart        entrenador: nombre, foto y tipo favorito
 │   ├── favorites_store.dart      favoritos persistidos
 │   ├── settings_store.dart       música, sonidos y Karen encendidos o no
@@ -189,18 +193,20 @@ Tocar tu foto, arriba a la derecha, abre tu perfil. Desde ahí:
 
 | Opción | Qué hace |
 |---|---|
-| **Cerrar sesión** | vuelve al registro y olvida tu nombre, foto y equipo |
+| **Crear cuenta o iniciar sesión** | (sin cuenta) sube tu perfil y tu equipo a la nube |
+| **Cerrar sesión** | sale de tu cuenta y borra tu perfil y tu equipo de este dispositivo; en la cuenta no se borra nada |
 | **Borrar lo descargado** | vacía la caché de la PokeAPI y de las imágenes; tu perfil se queda |
-| **Borrar todos mis datos** | todo lo anterior y además los ajustes: la app queda como recién instalada |
+| **Borrar todos mis datos** | todo lo anterior y además los ajustes: la app queda como recién instalada (tu cuenta sigue intacta) |
 
 Las dos acciones que no se pueden deshacer piden confirmación con un segundo toque.
 También puedes repetir la guía de Karen o apagar sus consejos.
 
 ## Detalles de la interfaz
 
-- **Registro de entrenador**: nombre, tipo favorito y foto de perfil libre
-  (recortada y reducida a 256 px antes de guardarla). Todo queda en el
-  dispositivo; no hay servidor.
+- **Registro de entrenador**: crear cuenta o iniciar sesión, con nombre, tipo
+  favorito y foto de perfil libre (recortada y reducida a 256 px antes de
+  guardarla, así cabe en el documento de Firestore sin pagar almacenamiento).
+  Los errores salen en español y la sesión se recuerda al volver a abrir.
 - **Apertura animada**: la pokébola cae, rebota, tiembla y se abre en un destello.
   En el navegador espera un toque ("Toca para empezar"): los navegadores no
   dejan sonar nada antes de un gesto, y así la apertura sí suena y la música
@@ -279,7 +285,8 @@ un parpadeo de texto mientras se descarga.
 
 Los sonidos y la música de `assets/` no son de terceros: están sintetizados para este
 proyecto con los scripts de [`tools/`](tools/), y se regeneran con
-`python tools/generate_music.py` y `python tools/generate_voice.py`.
+`python tools/generate_music.py`, `python tools/generate_voice.py`,
+`python tools/generate_battle_sfx.py` y `python tools/generate_ui_sfx.py`.
 
 ## Autor
 

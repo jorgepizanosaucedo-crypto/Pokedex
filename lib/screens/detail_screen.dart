@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/dex_data.dart';
+import '../data/moveset.dart';
 import '../data/type_chart.dart';
 import '../models/move.dart';
 import '../models/pokemon.dart';
@@ -64,7 +65,9 @@ class _DetailScreenState extends State<DetailScreen> {
   @override
   void dispose() {
     _controller.dispose();
-    // Al cerrar la ficha, el ambiente vuelve al tema del mapa.
+    // Al salir de la ficha se corta el grito que esté sonando (antes seguía
+    // sonando ya en la lista) y el ambiente vuelve al tema del mapa.
+    SoundService.instance.stopCry();
     MusicService.instance.backToOverworld();
     super.dispose();
   }
@@ -131,7 +134,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
 /// Abre la ficha de un Pokémon suelto (usado por la cadena evolutiva).
 void openPokemonById(BuildContext context, int id, String name) {
-  SoundService.instance.play(Sfx.open, volume: 0.5);
+  SoundService.instance.play(Sfx.card, volume: 0.5);
   Artwork.prefetch(context, id, tier: ArtTier.full);
   PokeApiService.instance.prefetch(id);
   Navigator.of(context).push(DetailScreen.route([PokemonListItem(id: id, name: name)], 0));
@@ -285,7 +288,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     }
     if (option.key == _selectedFormKey || _loadingForm) return;
     final previous = _formKey;
-    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    SoundService.instance.play(Sfx.chip, volume: 0.38);
     setState(() {
       _formKey = option.key;
       _loadingForm = true;
@@ -306,7 +309,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
       final big = option.kind == FormKind.mega ||
           option.kind == FormKind.gmax ||
           option.kind == FormKind.primal;
-      SoundService.instance.play(big ? Sfx.shiny : Sfx.open, volume: big ? 0.6 : 0.45);
+      SoundService.instance.play(big ? Sfx.mega : Sfx.morph, volume: big ? 0.6 : 0.5);
       HapticFeedback.heavyImpact();
       Future.delayed(const Duration(milliseconds: 380), () {
         if (mounted) SoundService.instance.playCry(next.cryUrl);
@@ -328,7 +331,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
   }
 
   void _openBattle(Pokemon pokemon) {
-    SoundService.instance.play(Sfx.open, volume: 0.5);
+    SoundService.instance.play(Sfx.battleStart, volume: 0.55);
     _roarTimer?.cancel();
     SoundService.instance.stopCry();
     Navigator.of(context)
@@ -345,6 +348,11 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     if (!widget.active || pokemon == null) return;
 
     _startRoarCycle(pokemon);
+    // Cada tipo se presenta con su propio sonido: chisporroteo si es de
+    // fuego, burbujas si es de agua, un zumbido si es bicho…
+    Future.delayed(const Duration(milliseconds: 140), () {
+      if (mounted && widget.active) SoundService.instance.playType(pokemon.primaryType);
+    });
     // Se presenta con un par de saltitos cuando termina de entrar.
     Future.delayed(const Duration(milliseconds: 650), () {
       if (mounted && widget.active) _hop.forward(from: 0);
@@ -395,7 +403,8 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     _roarTimer?.cancel();
     if (pokemon.cryUrl == null) return;
     _roarTimer = Timer.periodic(_roarEvery, (_) {
-      if (!mounted || !widget.active) return;
+      // Con la app oculta ni se mueve ni grita.
+      if (!mounted || !widget.active || !SoundService.instance.foreground) return;
       _playCry(pokemon);
     });
   }
@@ -410,7 +419,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
     final settings = SettingsStore.instance;
     final next = !settings.animated;
     settings.setAnimated(next);
-    SoundService.instance.play(next ? Sfx.open : Sfx.tap, volume: 0.4);
+    SoundService.instance.play(next ? Sfx.toggle : Sfx.chipOff, volume: 0.42);
     HapticFeedback.selectionClick();
     if (next) {
       _hop.forward(from: 0);
@@ -428,7 +437,7 @@ class _PokemonDetailState extends State<_PokemonDetail> with TickerProviderState
       HapticFeedback.mediumImpact();
       KarenController.instance.onShiny(pokemon.id, _fullName(pokemon));
     } else {
-      SoundService.instance.play(Sfx.tap, volume: 0.35);
+      SoundService.instance.play(Sfx.chipOff, volume: 0.38);
     }
   }
 
@@ -592,7 +601,10 @@ class _TopBar extends StatelessWidget {
           IconButton(
             key: KarenTargets.keyIf(active, 'back'),
             tooltip: 'Volver',
-            onPressed: () => Navigator.of(context).maybePop(),
+            onPressed: () {
+              SoundService.instance.play(Sfx.back, volume: 0.42);
+              Navigator.of(context).maybePop();
+            },
             icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
           ),
           Text(
@@ -704,7 +716,7 @@ class _FavoriteButtonState extends State<_FavoriteButton> with SingleTickerProvi
 
   void _toggle() {
     final added = FavoritesStore.instance.toggle(widget.id);
-    SoundService.instance.play(added ? Sfx.shiny : Sfx.tap, volume: added ? 0.45 : 0.3);
+    SoundService.instance.play(added ? Sfx.favOn : Sfx.favOff, volume: added ? 0.5 : 0.4);
     HapticFeedback.lightImpact();
     final name = displayName(widget.name);
     if (added) {
@@ -1296,7 +1308,7 @@ class _InfoSheet extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
                 onTap: (index) {
-                  SoundService.instance.play(Sfx.tap, volume: 0.3);
+                  SoundService.instance.play(Sfx.tab, volume: 0.4);
                   KarenController.instance.onTab(index);
                 },
                 // Cuatro pestañas en un teléfono: el texto se encoge si no

@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
+import 'account.dart';
+import 'cloud_sync.dart';
 import 'favorites_store.dart';
 import 'karen_controller.dart';
 import 'music_service.dart';
@@ -15,10 +17,16 @@ import 'type_index.dart';
 class Session {
   Session._();
 
-  /// Cierra la sesión: borra del dispositivo el perfil, la foto y el equipo.
-  /// Los ajustes y lo descargado se quedan.
+  /// Cierra la sesión: sale de la cuenta (lo pendiente se sube antes) y
+  /// borra del dispositivo el perfil, la foto y el equipo. En la cuenta se
+  /// queda todo. Los ajustes y lo descargado tampoco se tocan.
   static Future<void> signOut() async {
     KarenController.instance.reset();
+    final sync = CloudSync.instance;
+    await sync.flush();
+    // Primero se deja de sincronizar: así borrar lo local no vacía la cuenta.
+    await sync.stop();
+    await Account.signOut();
     await Future.wait([ProfileStore.instance.clear(), FavoritesStore.instance.clear()]);
     MusicService.instance.backToOverworld();
   }

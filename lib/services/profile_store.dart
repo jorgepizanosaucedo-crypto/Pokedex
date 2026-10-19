@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'prefs.dart';
 
 /// Datos del entrenador: nombre, foto y tipo favorito, guardados en el
-/// dispositivo. No hay servidor ni cuenta remota: el registro es local.
+/// dispositivo. Con sesión iniciada, `CloudSync` los copia a la cuenta.
 class ProfileStore extends ChangeNotifier {
   ProfileStore._();
   static final ProfileStore instance = ProfileStore._();
@@ -92,12 +92,14 @@ class ProfileStore extends ChangeNotifier {
   Future<void> markTutorialDone() async {
     if (_tutorialDone) return;
     _tutorialDone = true;
+    notifyListeners();
     await _persist();
   }
 
   Future<void> markDetailTourDone() async {
     if (_detailTourDone) return;
     _detailTourDone = true;
+    notifyListeners();
     await _persist();
   }
 
@@ -106,7 +108,45 @@ class ProfileStore extends ChangeNotifier {
   Future<void> resetDetailTour() async {
     if (!_detailTourDone) return;
     _detailTourDone = false;
+    notifyListeners();
     await _persist();
+  }
+
+  /// Datos que llegan de la cuenta en la nube (ver `CloudSync`). Sólo avisa
+  /// si algo cambió de verdad.
+  void applyRemote({
+    required String name,
+    String? favoriteType,
+    Uint8List? photo,
+    bool updatePhoto = true,
+    bool? tutorialDone,
+    bool? detailTourDone,
+  }) {
+    var changed = false;
+    if (name.trim().isNotEmpty && name.trim() != _name) {
+      _name = name.trim();
+      changed = true;
+    }
+    if (favoriteType != _favoriteType) {
+      _favoriteType = favoriteType;
+      changed = true;
+    }
+    if (updatePhoto && !listEquals(photo, _photo)) {
+      _photo = photo;
+      changed = true;
+    }
+    // Una guía vista en otro dispositivo cuenta como vista aquí también.
+    if (tutorialDone == true && !_tutorialDone) {
+      _tutorialDone = true;
+      changed = true;
+    }
+    if (detailTourDone == true && !_detailTourDone) {
+      _detailTourDone = true;
+      changed = true;
+    }
+    if (!changed) return;
+    notifyListeners();
+    _persist();
   }
 
   /// Borra el perfil del dispositivo (cerrar sesión).

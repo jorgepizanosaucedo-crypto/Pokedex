@@ -118,6 +118,39 @@ const List<String> kNothing = [
   'Mmm… ¿era un baile? Lindo, pero no me hizo nada.',
 ];
 
+/// Al cambiar los movimientos desde la hoja.
+const List<String> kNewMoves = [
+  '¿Movimientos nuevos? Todos aprendidos legalmente, ¿verdad? …Verdad.',
+  'Uy, cambiaste de estrategia. Ya me dio miedo.',
+  'Bien elegidos. A ver si sabes usarlos.',
+];
+
+/// Bromas para movimientos famosos que en el combate no hacen nada.
+const Map<String, List<String>> kMoveQuips = {
+  'splash': [
+    '¡{name} usó Salpicadura! …Pero no pasó nada. El clásico de los clásicos.',
+    'Salpicadura. El movimiento más honesto del juego: promete nada y cumple.',
+  ],
+  'transform': [
+    '¿Te ibas a transformar en mí? Hay una sola Karen, gracias.',
+  ],
+  'sketch': [
+    'Esquema necesita copiar el movimiento que yo usé… y yo no usé nada. Jaque mate.',
+  ],
+  'celebrate': [
+    '¡Feliz cumpleaños a ti también! …Espera, ¿estamos peleando o no?',
+  ],
+  'hold-hands': [
+    '¿Tomarnos de la mano en pleno combate? Qué tierno. Y qué inútil.',
+  ],
+  'teleport': [
+    '¿Teletransportarte? Aquí no hay a dónde ir, {name}.',
+  ],
+  'happy-hour': [
+    'Hora Feliz duplica el dinero que ganas. Aquí sólo te ganas mi respeto.',
+  ],
+};
+
 /// Estados alterados: lo que dice al recibirlos.
 const Map<String, List<String>> kAilment = {
   'burn': [

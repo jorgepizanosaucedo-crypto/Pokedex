@@ -169,9 +169,18 @@ class _KarenOverlayState extends State<KarenOverlay> {
                   target: _rect,
                   // En la guía el globo no se cierra solo: lleva sus botones.
                   tour: _karen.inTour ? (index: _karen.tourIndex, total: _karen.tourLength) : null,
-                  onNext: _karen.nextStep,
-                  onBack: _karen.previousStep,
-                  onSkip: () => _karen.endTour(skipped: true),
+                  onNext: () {
+                    SoundService.instance.play(Sfx.tab, volume: 0.35);
+                    _karen.nextStep();
+                  },
+                  onBack: () {
+                    SoundService.instance.play(Sfx.back, volume: 0.35);
+                    _karen.previousStep();
+                  },
+                  onSkip: () {
+                    SoundService.instance.play(Sfx.chipOff, volume: 0.35);
+                    _karen.endTour(skipped: true);
+                  },
                   onDismiss: _karen.hide,
                   // Cada paso de la guía es un globo nuevo: antes el texto se
                   // quedaba en el primer paso si había una frase previa.
@@ -1122,9 +1131,14 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
                 if (tour.index > 0)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
-                    child: IconButton.outlined(
+                    // Sin tooltip: Karen vive encima del Navigator, donde no
+                    // hay Overlay, y un Tooltip ahí rompe el globo. El lector
+                    // de pantalla recibe la etiqueta por Semantics.
+                    child: Semantics(
+                      label: 'Atrás',
+                      button: true,
+                      child: IconButton.outlined(
                       onPressed: widget.onBack,
-                      tooltip: 'Atrás',
                       iconSize: 18,
                       constraints: const BoxConstraints.tightFor(width: 34, height: 34),
                       padding: EdgeInsets.zero,
@@ -1133,6 +1147,7 @@ class _SpeechBubbleState extends State<_SpeechBubble> {
                         side: const BorderSide(color: AppColors.line),
                       ),
                       icon: const Icon(Icons.arrow_back_rounded),
+                    ),
                     ),
                   ),
                 FilledButton(

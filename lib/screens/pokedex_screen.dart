@@ -168,7 +168,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
   }
 
   Future<void> _selectType(String? type) async {
-    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    SoundService.instance.play(type == null ? Sfx.chipOff : Sfx.chip, volume: 0.4);
     if (type == null) {
       setState(() {
         _type = null;
@@ -307,7 +307,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
   }
 
   void _openFilters() {
-    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    SoundService.instance.play(Sfx.sheetUp, volume: 0.45);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -321,8 +321,8 @@ class _PokedexScreenState extends State<PokedexScreen> {
     );
   }
 
-  void _open(List<PokemonListItem> list, int index) {
-    SoundService.instance.play(Sfx.open, volume: 0.5);
+  void _open(List<PokemonListItem> list, int index, {Sfx? sound = Sfx.card}) {
+    if (sound != null) SoundService.instance.play(sound, volume: 0.5);
     final id = list[index].id;
     // El original empieza a bajar ya: la transición le da ventaja.
     Artwork.prefetch(context, id, tier: ArtTier.full);
@@ -331,7 +331,7 @@ class _PokedexScreenState extends State<PokedexScreen> {
   }
 
   void _toggleTeam() {
-    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    SoundService.instance.play(_onlyFavorites ? Sfx.chipOff : Sfx.favOn, volume: 0.4);
     setState(() => _onlyFavorites = !_onlyFavorites);
     if (_onlyFavorites) {
       final team = FavoritesStore.instance;
@@ -343,11 +343,11 @@ class _PokedexScreenState extends State<PokedexScreen> {
   void _openRandom() {
     final list = _visible.isEmpty ? _all : _visible;
     if (list.isEmpty) return;
-    SoundService.instance.play(Sfx.swipe, volume: 0.5);
+    SoundService.instance.play(Sfx.dice, volume: 0.55);
     HapticFeedback.mediumImpact();
     final index = math.Random().nextInt(list.length);
     KarenController.instance.onRandom(list[index].id, itemLabel(list[index]));
-    _open(list, index);
+    _open(list, index, sound: null);
   }
 
   @override
@@ -746,6 +746,7 @@ class _SearchField extends StatelessWidget {
                     tooltip: 'Borrar búsqueda',
                     icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.muted),
                     onPressed: () {
+                      SoundService.instance.play(Sfx.chipOff, volume: 0.35);
                       controller.clear();
                       onChanged('');
                     },
@@ -917,7 +918,10 @@ class _MusicToggle extends StatelessWidget {
       listenable: settings,
       builder: (context, _) => IconButton(
         tooltip: settings.music ? 'Quitar la música' : 'Poner la música',
-        onPressed: () => settings.setMusic(!settings.music),
+        onPressed: () {
+          SoundService.instance.play(settings.music ? Sfx.chipOff : Sfx.toggle, volume: 0.4);
+          settings.setMusic(!settings.music);
+        },
         icon: Icon(settings.music ? Icons.music_note_rounded : Icons.music_off_rounded),
       ),
     );
@@ -936,7 +940,7 @@ class _SoundToggle extends StatelessWidget {
         tooltip: settings.sounds ? 'Silenciar efectos' : 'Activar efectos',
         onPressed: () async {
           await settings.setSounds(!settings.sounds);
-          if (settings.sounds) SoundService.instance.play(Sfx.tap, volume: 0.4);
+          if (settings.sounds) SoundService.instance.play(Sfx.toggle, volume: 0.45);
         },
         icon: Icon(settings.sounds ? Icons.volume_up_rounded : Icons.volume_off_rounded),
       ),
@@ -1064,7 +1068,10 @@ class _ErrorState extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           FilledButton.icon(
-            onPressed: onRetry,
+            onPressed: () {
+              SoundService.instance.play(Sfx.tap, volume: 0.4);
+              onRetry();
+            },
             style: FilledButton.styleFrom(backgroundColor: AppColors.pokeRed),
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Reintentar'),
@@ -1132,7 +1139,10 @@ class _ActiveChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onRemove,
+      onTap: () {
+        SoundService.instance.play(Sfx.chipOff, volume: 0.38);
+        onRemove();
+      },
       child: Container(
         padding: const EdgeInsets.only(left: 11, right: 6),
         decoration: BoxDecoration(
@@ -1169,7 +1179,9 @@ class _FilterSheetState extends State<_FilterSheet> {
   late DexFilters _f = widget.initial;
 
   void _set(DexFilters next) {
-    SoundService.instance.play(Sfx.tap, volume: 0.3);
+    // Poner un filtro suena hacia arriba; quitarlo, hacia abajo.
+    final fewer = next.activeCount < _f.activeCount;
+    SoundService.instance.play(fewer ? Sfx.chipOff : Sfx.chip, volume: 0.38);
     setState(() => _f = next);
     widget.onChanged(next);
   }
@@ -1304,7 +1316,10 @@ class _FilterSheetState extends State<_FilterSheet> {
                       backgroundColor: AppColors.pokeRed,
                       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
                     ),
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      SoundService.instance.play(Sfx.back, volume: 0.4);
+                      Navigator.of(context).pop();
+                    },
                     child: Text(
                       'Ver $count Pokémon',
                       style: const TextStyle(fontWeight: FontWeight.w700),

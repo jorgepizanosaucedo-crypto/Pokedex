@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/account.dart';
+import '../services/cloud_sync.dart';
 import '../services/music_service.dart';
 import '../services/profile_store.dart';
 import '../services/session.dart';
@@ -13,21 +15,26 @@ import '../widgets/pokeball.dart';
 import '../widgets/trainer_avatar.dart';
 import 'pokedex_screen.dart';
 
-/// Alta del entrenador: nombre, foto y tipo favorito.
+/// Crear cuenta o iniciar sesión (Firebase Authentication, con correo y
+/// contraseña). El perfil y el equipo se guardan en la cuenta y en el
+/// dispositivo, así que se recuperan desde cualquier teléfono o computadora.
 ///
-/// No hay servidor ni contraseña: los datos se guardan en el dispositivo y
-/// sirven para la bienvenida y para que Karen te llame por tu nombre.
+/// Si no hay conexión con Firebase, o si se prefiere, se puede entrar sin
+/// cuenta: entonces todo se queda sólo en este dispositivo, como antes.
 class LoginScreen extends StatefulWidget {
   /// Aviso que se muestra arriba del formulario (por ejemplo, al volver aquí
   /// después de cerrar sesión).
   final String? notice;
 
-  const LoginScreen({super.key, this.notice});
+  /// Empieza en "Iniciar sesión" en vez de "Crear cuenta".
+  final bool signIn;
+
+  const LoginScreen({super.key, this.notice, this.signIn = false});
 
   /// Ruta con fundido, para volver aquí desde cualquier pantalla.
-  static Route<void> route({String? notice}) => PageRouteBuilder<void>(
+  static Route<void> route({String? notice, bool signIn = false}) => PageRouteBuilder<void>(
     transitionDuration: const Duration(milliseconds: 420),
-    pageBuilder: (_, _, _) => LoginScreen(notice: notice),
+    pageBuilder: (_, _, _) => LoginScreen(notice: notice, signIn: signIn),
     transitionsBuilder: (_, animation, _, child) =>
         FadeTransition(opacity: animation, child: child),
   );
@@ -38,27 +45,67 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _name = TextEditingController();
-  final FocusNode _nameFocus = FocusNode();
+  final TextEditingController _email = TextEditingController();
+  final TextEditingController _password = TextEditingController();
+  final FocusNode _passwordFocus = FocusNode();
 
+  late bool _signIn = widget.signIn;
   String? _type;
   Uint8List? _photo;
   bool _busy = false;
+  bool _showPassword = false;
   String? _photoError;
+  String? _error;
+  String? _info;
+
+  bool get _online => Account.available;
 
   @override
   void initState() {
     super.initState();
-    _name.addListener(() => setState(() {}));
+    // Quien ya tenía perfil en este dispositivo (sin cuenta) no lo vuelve a
+    // escribir: sólo le falta el correo y la contraseña.
+    final profile = ProfileStore.instance;
+    if (profile.isRegistered) {
+      _name.text = profile.name;
+      _type = profile.favoriteType;
+      _photo = profile.photo;
+    }
+    for (final c in [_name, _email, _password]) {
+      c.addListener(_onEdit);
+    }
   }
+
+  void _onEdit() => setState(() {
+    _error = null;
+  });
 
   @override
   void dispose() {
     _name.dispose();
-    _nameFocus.dispose();
+    _email.dispose();
+    _password.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
-  bool get _canSubmit => _name.text.trim().isNotEmpty && !_busy;
+  bool get _canSubmit {
+    if (_busy) return false;
+    if (!_online) return _name.text.trim().isNotEmpty;
+    final emailOk = _email.text.trim().isNotEmpty;
+    final passwordOk = _password.text.isNotEmpty;
+    return _signIn ? emailOk && passwordOk : _name.text.trim().isNotEmpty && emailOk && passwordOk;
+  }
+
+  void _switchMode(bool signIn) {
+    if (_signIn == signIn || _busy) return;
+    SoundService.instance.play(Sfx.tab, volume: 0.4);
+    setState(() {
+      _signIn = signIn;
+      _error = null;
+      _info = null;
+    });
+  }
 
   Future<void> _pickPhoto() async {
     SoundService.instance.play(Sfx.tap, volume: 0.35);
@@ -82,13 +129,105 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _fail(String message) {
+    SoundService.instance.play(Sfx.error, volume: 0.45);
+    setState(() {
+      _busy = false;
+      _error = message;
+    });
+  }
+
   Future<void> _submit() async {
     if (!_canSubmit) return;
-    setState(() => _busy = true);
+    if (!_online) {
+      await _enterWithoutAccount();
+      return;
+    }
+    if (!Account.looksLikeEmail(_email.text)) {
+      _fail('Ese correo no parece válido. Revísalo.');
+      return;
+    }
+    if (!_signIn && _password.text.length < 6) {
+      _fail('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _info = null;
+    });
     HapticFeedback.mediumImpact();
-    SoundService.instance.play(Sfx.open, volume: 0.5);
+    try {
+      if (_signIn) {
+        final user = await Account.signIn(email: _email.text, password: _password.text);
+        // Baja el perfil y el equipo guardados en la cuenta.
+        await CloudSync.instance.start(user.uid);
+        final profile = ProfileStore.instance;
+        if (!profile.isRegistered) {
+          await profile.save(
+            name: user.displayName ?? _email.text.trim().split('@').first,
+            favoriteType: profile.favoriteType,
+            updatePhoto: false,
+          );
+        }
+      } else {
+        final user = await Account.signUp(
+          email: _email.text,
+          password: _password.text,
+          name: _name.text,
+        );
+        await ProfileStore.instance.save(name: _name.text, favoriteType: _type, photo: _photo);
+        await CloudSync.instance.start(user.uid, upload: true);
+      }
+      if (!mounted) return;
+      SoundService.instance.play(Sfx.success, volume: 0.55);
+      _enter();
+    } catch (e) {
+      if (!mounted) return;
+      _fail(Account.messageFor(e));
+      // Si el correo ya tiene cuenta, lo lógico es iniciar sesión con ella.
+      if (Account.codeOf(e) == 'email-already-in-use') setState(() => _signIn = true);
+    }
+  }
+
+  Future<void> _enterWithoutAccount() async {
+    if (_name.text.trim().isEmpty) {
+      _fail('Escribe tu nombre de entrenador para entrar sin cuenta.');
+      return;
+    }
+    setState(() => _busy = true);
     await ProfileStore.instance.save(name: _name.text, favoriteType: _type, photo: _photo);
     if (!mounted) return;
+    SoundService.instance.play(Sfx.success, volume: 0.5);
+    _enter();
+  }
+
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    if (!Account.looksLikeEmail(email)) {
+      _fail('Escribe arriba el correo de tu cuenta y vuelve a tocar aquí.');
+      return;
+    }
+    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await Account.sendPasswordReset(email);
+      if (!mounted) return;
+      SoundService.instance.play(Sfx.chip, volume: 0.45);
+      setState(() {
+        _busy = false;
+        _info = 'Listo: si hay una cuenta con $email, te llegó un correo para cambiar '
+            'la contraseña. Revisa también la carpeta de spam.';
+      });
+    } catch (e) {
+      if (mounted) _fail(Account.messageFor(e));
+    }
+  }
+
+  void _enter() {
     // Antes se navegaba con el contexto del splash, que ya no existía: el
     // botón se quedaba gris y no pasaba nada.
     Navigator.of(context).pushAndRemoveUntil(
@@ -104,10 +243,41 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  InputDecoration _field(String hint, IconData icon, {Widget? suffix}) => InputDecoration(
+    hintText: hint,
+    counterText: '',
+    filled: true,
+    fillColor: AppColors.background,
+    prefixIcon: Icon(icon, color: AppColors.muted, size: 20),
+    suffixIcon: suffix,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide.none,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final types = kTypeStyles.keys.toList();
     final layout = Layout.of(context);
+    final creating = !_signIn || !_online;
+
+    final String title;
+    final String subtitle;
+    final String button;
+    if (!_online) {
+      title = 'Bienvenido';
+      subtitle = 'Entra para empezar tu Pokédex';
+      button = 'Entrar sin cuenta';
+    } else if (_signIn) {
+      title = '¡Hola de nuevo!';
+      subtitle = 'Inicia sesión y recupera tu equipo';
+      button = 'Entrar';
+    } else {
+      title = 'Bienvenido';
+      subtitle = 'Crea tu cuenta de entrenador';
+      button = 'Crear cuenta y entrar';
+    }
 
     return KarenBottomInset(
       value: 0,
@@ -141,210 +311,325 @@ class _LoginScreenState extends State<LoginScreen> {
             SafeArea(
               child: ContentWidth(
                 maxWidth: kFormMaxWidth,
-                child: ListView(
-                  padding: EdgeInsets.fromLTRB(20, layout.isShort ? 18 : 30, 20, 28),
-                  children: [
-                    const Text(
-                      'Bienvenido',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 34,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
-                        shadows: [
-                          Shadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 2)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Regístrate para empezar tu Pokédex',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 26),
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(26),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.ink.withValues(alpha: 0.12),
-                            blurRadius: 26,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (widget.notice != null) ...[
-                            _Notice(widget.notice!),
-                            const SizedBox(height: 18),
+                child: AutofillGroup(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(20, layout.isShort ? 18 : 30, 20, 28),
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: Column(
+                          key: ValueKey(title),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 34,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.5,
+                                shadows: [
+                                  Shadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 2)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ],
-                          Center(
-                            child: Column(
-                              children: [
-                                TrainerAvatar(
-                                  photo: _photo,
-                                  initials: _name.text.trim().isEmpty
-                                      ? '?'
-                                      : _name.text.trim()[0].toUpperCase(),
-                                  size: layout.isShort ? 68 : 86,
-                                  onTap: _pickPhoto,
-                                  showEditBadge: true,
-                                ),
-                                const SizedBox(height: 10),
-                                TextButton.icon(
-                                  onPressed: _pickPhoto,
-                                  style: TextButton.styleFrom(foregroundColor: AppColors.pokeRed),
-                                  icon: const Icon(Icons.add_a_photo_rounded, size: 17),
-                                  label: Text(
-                                    _photo == null ? 'Elegir foto de perfil' : 'Cambiar foto',
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                if (_photo != null)
-                                  TextButton(
-                                    onPressed: () => setState(() => _photo = null),
-                                    style: TextButton.styleFrom(foregroundColor: AppColors.muted),
-                                    child: const Text(
-                                      'Quitar foto',
-                                      style: TextStyle(fontSize: 12),
-                                    ),
-                                  ),
-                                if (_photoError != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Text(
-                                      _photoError!,
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: AppColors.pokeRed,
-                                      ),
-                                    ),
-                                  ),
+                        ),
+                      ),
+                      const SizedBox(height: 26),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(26),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.ink.withValues(alpha: 0.12),
+                              blurRadius: 26,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: AnimatedSize(
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOut,
+                          alignment: Alignment.topCenter,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (_online) ...[
+                                _ModeSwitch(signIn: _signIn, onChanged: _switchMode),
+                                const SizedBox(height: 18),
                               ],
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          const _Label('¿Cómo te llamas?'),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _name,
-                            focusNode: _nameFocus,
-                            textInputAction: TextInputAction.done,
-                            textCapitalization: TextCapitalization.words,
-                            maxLength: 24,
-                            onSubmitted: (_) => _submit(),
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                            decoration: InputDecoration(
-                              hintText: 'Tu nombre de entrenador',
-                              counterText: '',
-                              filled: true,
-                              fillColor: AppColors.background,
-                              prefixIcon: const Icon(
-                                Icons.badge_rounded,
-                                color: AppColors.muted,
-                                size: 20,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          const _Label('Tu tipo favorito (opcional)'),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 7,
-                            children: types.map((type) {
-                              final style = typeStyle(type);
-                              final active = _type == type;
-                              return GestureDetector(
-                                onTap: () {
-                                  SoundService.instance.play(Sfx.tap, volume: 0.3);
-                                  setState(() => _type = active ? null : type);
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                                  decoration: BoxDecoration(
-                                    color: active ? style.color : AppColors.background,
-                                    borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(
-                                      color: active ? style.color : AppColors.line,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                              if (widget.notice != null) ...[
+                                _Notice(widget.notice!),
+                                const SizedBox(height: 16),
+                              ],
+                              if (!_online) ...[
+                                const _Notice(
+                                  'No me pude conectar con el servidor de cuentas. Puedes entrar sin '
+                                  'cuenta y crearla después desde tu perfil.',
+                                  warning: true,
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                              if (creating) ...[
+                                Center(
+                                  child: Column(
                                     children: [
-                                      Icon(
-                                        style.icon,
-                                        size: 13,
-                                        color: active ? Colors.white : style.color,
+                                      TrainerAvatar(
+                                        photo: _photo,
+                                        initials: _name.text.trim().isEmpty
+                                            ? '?'
+                                            : _name.text.trim()[0].toUpperCase(),
+                                        size: layout.isShort ? 68 : 86,
+                                        onTap: _pickPhoto,
+                                        showEditBadge: true,
                                       ),
-                                      const SizedBox(width: 5),
-                                      Text(
-                                        style.label,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: active ? Colors.white : AppColors.ink,
+                                      const SizedBox(height: 10),
+                                      TextButton.icon(
+                                        onPressed: _pickPhoto,
+                                        style: TextButton.styleFrom(foregroundColor: AppColors.pokeRed),
+                                        icon: const Icon(Icons.add_a_photo_rounded, size: 17),
+                                        label: Text(
+                                          _photo == null ? 'Elegir foto de perfil' : 'Cambiar foto',
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
                                       ),
+                                      if (_photo != null)
+                                        TextButton(
+                                          onPressed: () {
+                                            SoundService.instance.play(Sfx.chipOff, volume: 0.35);
+                                            setState(() => _photo = null);
+                                          },
+                                          style: TextButton.styleFrom(foregroundColor: AppColors.muted),
+                                          child: const Text(
+                                            'Quitar foto',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
+                                        ),
+                                      if (_photoError != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            _photoError!,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: AppColors.pokeRed,
+                                            ),
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ),
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 22),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed: _canSubmit ? _submit : null,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: AppColors.pokeRed,
-                                // Desactivado sigue siendo rojo, sólo más tenue.
-                                disabledBackgroundColor: AppColors.pokeRed.withValues(alpha: 0.45),
-                                disabledForegroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 15),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
+                                const SizedBox(height: 18),
+                                const _Label('¿Cómo te llamas?'),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: _name,
+                                  textInputAction: TextInputAction.next,
+                                  textCapitalization: TextCapitalization.words,
+                                  autofillHints: const [AutofillHints.nickname],
+                                  maxLength: 24,
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                                  decoration: _field('Tu nombre de entrenador', Icons.badge_rounded),
+                                ),
+                                const SizedBox(height: 14),
+                              ],
+                              if (_online) ...[
+                                const _Label('Correo'),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: _email,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  autocorrect: false,
+                                  autofillHints: const [AutofillHints.email],
+                                  onSubmitted: (_) => _passwordFocus.requestFocus(),
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                                  decoration: _field('tucorreo@ejemplo.com', Icons.alternate_email_rounded),
+                                ),
+                                const SizedBox(height: 14),
+                                const _Label('Contraseña'),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: _password,
+                                  focusNode: _passwordFocus,
+                                  obscureText: !_showPassword,
+                                  textInputAction: TextInputAction.done,
+                                  autocorrect: false,
+                                  enableSuggestions: false,
+                                  autofillHints: [
+                                    _signIn ? AutofillHints.password : AutofillHints.newPassword,
+                                  ],
+                                  onSubmitted: (_) => _submit(),
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                                  decoration: _field(
+                                    _signIn ? 'Tu contraseña' : 'Mínimo 6 caracteres',
+                                    Icons.lock_rounded,
+                                    suffix: IconButton(
+                                      tooltip: _showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña',
+                                      onPressed: () {
+                                        SoundService.instance.play(Sfx.toggle, volume: 0.35);
+                                        setState(() => _showPassword = !_showPassword);
+                                      },
+                                      icon: Icon(
+                                        _showPassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                                        color: AppColors.muted,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_signIn)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton(
+                                      onPressed: _busy ? null : _forgotPassword,
+                                      style: TextButton.styleFrom(foregroundColor: AppColors.pokeRed),
+                                      child: const Text(
+                                        '¿Olvidaste tu contraseña?',
+                                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  const SizedBox(height: 14),
+                              ],
+                              if (creating) ...[
+                                const _Label('Tu tipo favorito (opcional)'),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 7,
+                                  runSpacing: 7,
+                                  children: types.map((type) {
+                                    final style = typeStyle(type);
+                                    final active = _type == type;
+                                    return GestureDetector(
+                                      onTap: () {
+                                        // Al elegirlo suena el tipo mismo.
+                                        if (active) {
+                                          SoundService.instance.play(Sfx.chipOff, volume: 0.35);
+                                        } else {
+                                          SoundService.instance.playType(type, volume: 0.4);
+                                        }
+                                        setState(() => _type = active ? null : type);
+                                      },
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 200),
+                                        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                                        decoration: BoxDecoration(
+                                          color: active ? style.color : AppColors.background,
+                                          borderRadius: BorderRadius.circular(18),
+                                          border: Border.all(
+                                            color: active ? style.color : AppColors.line,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              style.icon,
+                                              size: 13,
+                                              color: active ? Colors.white : style.color,
+                                            ),
+                                            const SizedBox(width: 5),
+                                            Text(
+                                              style.label,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                                color: active ? Colors.white : AppColors.ink,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                                const SizedBox(height: 18),
+                              ],
+                              if (_error != null) ...[
+                                _Notice(_error!, warning: true),
+                                const SizedBox(height: 12),
+                              ],
+                              if (_info != null) ...[
+                                _Notice(_info!),
+                                const SizedBox(height: 12),
+                              ],
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _canSubmit ? _submit : null,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: AppColors.pokeRed,
+                                    // Desactivado sigue siendo rojo, sólo más tenue.
+                                    disabledBackgroundColor: AppColors.pokeRed.withValues(alpha: 0.45),
+                                    disabledForegroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 15),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                  icon: _busy
+                                      ? const SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.catching_pokemon_rounded),
+                                  label: Text(
+                                    button,
+                                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                                  ),
                                 ),
                               ),
-                              icon: const Icon(Icons.catching_pokemon_rounded),
-                              label: const Text(
-                                'Entrar a la Pokédex',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                              const SizedBox(height: 10),
+                              if (_online && !_signIn)
+                                Center(
+                                  child: TextButton(
+                                    onPressed: _busy || _name.text.trim().isEmpty ? null : _enterWithoutAccount,
+                                    style: TextButton.styleFrom(foregroundColor: AppColors.muted),
+                                    child: const Text(
+                                      'Prefiero entrar sin cuenta',
+                                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ),
+                              Center(
+                                child: Text(
+                                  _online
+                                      ? 'Con tu cuenta, tu perfil y tu equipo te siguen a cualquier dispositivo.'
+                                      : 'Tus datos se quedan en este dispositivo.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: AppColors.muted.withValues(alpha: 0.9),
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                          const SizedBox(height: 10),
-                          Center(
-                            child: Text(
-                              'Tus datos se quedan en este dispositivo.',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: AppColors.muted.withValues(alpha: 0.9),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -355,26 +640,87 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Aviso verde arriba del formulario.
-class _Notice extends StatelessWidget {
-  final String text;
+/// Las dos pestañas de arriba de la tarjeta: crear cuenta o iniciar sesión.
+class _ModeSwitch extends StatelessWidget {
+  final bool signIn;
+  final ValueChanged<bool> onChanged;
 
-  const _Notice(this.text);
+  const _ModeSwitch({required this.signIn, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF23855A);
+    Widget option(String label, bool value) {
+      final active = signIn == value;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onChanged(value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? AppColors.surface : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: AppColors.ink.withValues(alpha: 0.1),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                color: active ? AppColors.pokeRed : AppColors.muted,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(children: [option('Crear cuenta', false), option('Iniciar sesión', true)]),
+    );
+  }
+}
+
+/// Aviso arriba del formulario: verde (todo bien) o rojo (algo falló).
+class _Notice extends StatelessWidget {
+  final String text;
+  final bool warning;
+
+  const _Notice(this.text, {this.warning = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = warning ? AppColors.pokeRedInk : const Color(0xFF23855A);
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: green.withValues(alpha: 0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: green.withValues(alpha: 0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.check_circle_rounded, size: 18, color: green),
+          Icon(
+            warning ? Icons.error_rounded : Icons.check_circle_rounded,
+            size: 18,
+            color: color,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -412,7 +758,8 @@ Future<void> showTrainerSheet(BuildContext context) async {
   final settings = SettingsStore.instance;
   final navigator = Navigator.of(context, rootNavigator: true);
   final messenger = ScaffoldMessenger.of(context);
-  SoundService.instance.play(Sfx.tap, volume: 0.35);
+  final signedIn = Account.signedIn;
+  SoundService.instance.play(Sfx.sheetUp, volume: 0.45);
 
   Future<void> backToLogin(String notice) =>
       navigator.pushAndRemoveUntil(LoginScreen.route(notice: notice), (_) => false);
@@ -468,17 +815,51 @@ Future<void> showTrainerSheet(BuildContext context) async {
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
+              if (profile.favoriteType != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Entrenador de tipo ${typeStyle(profile.favoriteType).label}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                  ),
+                ),
               Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  profile.favoriteType == null
-                      ? 'Tu perfil se guarda sólo en este dispositivo'
-                      : 'Entrenador de tipo ${typeStyle(profile.favoriteType).label}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      signedIn ? Icons.cloud_done_rounded : Icons.phone_android_rounded,
+                      size: 15,
+                      color: signedIn ? const Color(0xFF23855A) : AppColors.muted,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        signedIn
+                            ? '${Account.email ?? 'Tu cuenta'} · tu equipo se guarda en la nube'
+                            : 'Sin cuenta: tu perfil se guarda sólo en este dispositivo',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),
+              if (!signedIn && Account.available)
+                _SheetTile(
+                  icon: Icons.cloud_upload_rounded,
+                  iconColor: AppColors.pokeRed,
+                  title: 'Crear cuenta o iniciar sesión',
+                  subtitle: 'Guarda tu perfil y tu equipo en la nube y úsalos en otro dispositivo',
+                  onTap: () {
+                    SoundService.instance.play(Sfx.card, volume: 0.45);
+                    Navigator.of(sheetContext).pop();
+                    navigator.push(LoginScreen.route());
+                  },
+                ),
               _SheetTile(
                 icon: Icons.school_rounded,
                 iconColor: AppColors.pokeRed,
@@ -494,13 +875,19 @@ Future<void> showTrainerSheet(BuildContext context) async {
                 icon: Icons.chat_bubble_rounded,
                 iconColor: AppColors.pokeRed,
                 title: 'Consejos de Karen',
-                subtitle: 'Comentarios y datos mientras navegas',
+                subtitle: 'Comentarios, datos y memes mientras navegas',
                 trailing: Switch(
                   value: settings.karen,
                   activeTrackColor: AppColors.pokeRed,
-                  onChanged: settings.setKaren,
+                  onChanged: (value) {
+                    SoundService.instance.play(value ? Sfx.toggle : Sfx.chipOff, volume: 0.4);
+                    settings.setKaren(value);
+                  },
                 ),
-                onTap: () => settings.setKaren(!settings.karen),
+                onTap: () {
+                  SoundService.instance.play(settings.karen ? Sfx.chipOff : Sfx.toggle, volume: 0.4);
+                  settings.setKaren(!settings.karen);
+                },
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
@@ -509,14 +896,30 @@ Future<void> showTrainerSheet(BuildContext context) async {
               _ConfirmTile(
                 icon: Icons.logout_rounded,
                 title: 'Cerrar sesión',
-                subtitle: 'Borra tu perfil y tu equipo de este dispositivo',
-                question: '¿Cerrar sesión? Se borran tu perfil y tu equipo.',
+                subtitle: signedIn
+                    ? 'Sales de tu cuenta en este dispositivo. En la nube no se borra nada.'
+                    : 'Borra tu perfil y tu equipo de este dispositivo',
+                question: signedIn
+                    ? '¿Cerrar sesión? Tu perfil y tu equipo siguen guardados en tu cuenta.'
+                    : '¿Cerrar sesión? Se borran tu perfil y tu equipo.',
                 confirmLabel: 'Sí, cerrar sesión',
                 onConfirm: () async {
                   await Session.signOut();
-                  await backToLogin(
-                    'Cerraste sesión. Tu perfil y tu equipo se borraron de este dispositivo.',
-                  );
+                  SoundService.instance.play(Sfx.back, volume: 0.45);
+                  if (signedIn) {
+                    await navigator.pushAndRemoveUntil(
+                      LoginScreen.route(
+                        notice: 'Cerraste sesión. Tu perfil y tu equipo siguen en tu cuenta: '
+                            'entra cuando quieras.',
+                        signIn: true,
+                      ),
+                      (_) => false,
+                    );
+                  } else {
+                    await backToLogin(
+                      'Cerraste sesión. Tu perfil y tu equipo se borraron de este dispositivo.',
+                    );
+                  }
                 },
               ),
               _SheetTile(
@@ -536,7 +939,9 @@ Future<void> showTrainerSheet(BuildContext context) async {
               _ConfirmTile(
                 icon: Icons.delete_forever_rounded,
                 title: 'Borrar todos mis datos',
-                subtitle: 'Perfil, equipo, ajustes y lo descargado',
+                subtitle: signedIn
+                    ? 'De este dispositivo: perfil, equipo, ajustes y lo descargado. Tu cuenta no se borra.'
+                    : 'Perfil, equipo, ajustes y lo descargado',
                 question: '¿Borrar todo? No se puede deshacer.',
                 confirmLabel: 'Sí, borrar todo',
                 danger: true,

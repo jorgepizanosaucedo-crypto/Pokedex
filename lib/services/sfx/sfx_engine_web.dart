@@ -53,6 +53,21 @@ class SfxEngine {
     if (ctx != null && ctx.state != 'running') ctx.resume();
   }
 
+  /// Avisa cuando la pestaña se oculta o vuelve a verse.
+  ///
+  /// Se escucha al navegador directamente (`visibilitychange` y `pagehide`):
+  /// el ciclo de vida de Flutter no siempre llega en web, y entonces los
+  /// gritos seguían sonando con la pestaña en segundo plano.
+  static void watchVisibility(void Function(bool visible) onChange) {
+    try {
+      web.document.addEventListener(
+        'visibilitychange',
+        ((web.Event _) => onChange(!web.document.hidden)).toJS,
+      );
+      web.window.addEventListener('pagehide', ((web.Event _) => onChange(false)).toJS);
+    } catch (_) {}
+  }
+
   /// Con la pestaña oculta se suspende: nada suena de fondo.
   static void suspend() {
     final ctx = _context;

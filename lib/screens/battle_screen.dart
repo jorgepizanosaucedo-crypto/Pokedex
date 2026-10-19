@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/dex_data.dart';
+import '../data/moveset.dart';
 import '../data/type_chart.dart';
 import '../models/move.dart';
 import '../models/pokemon.dart';
@@ -61,7 +62,7 @@ class _Popup {
 }
 
 class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMixin {
-  static const int _level = 50;
+  static const int _level = kBattleLevel;
   static const int _karenMaxHp = 180;
 
   /// Defensa de Karen (la de un Pokémon con 70 de base a nivel 50).
@@ -84,6 +85,10 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   List<PokemonMoveRef> _pool = const [];
   List<MoveInfo> _moves = const [];
   bool _loadingMoves = true;
+
+  /// Los que sabría a nivel 50 en el juego, y de qué juego salen.
+  List<String> _defaults = const [];
+  String _version = '';
 
   String _message = '';
   String _karenLine = '';
@@ -140,6 +145,13 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     duration: const Duration(milliseconds: 900),
   )..forward();
 
+  /// Si sales del combate a medio turno, lo que quedaba pendiente ya no
+  /// toca la pantalla (antes podía tronar con "setState after dispose").
+  @override
+  void setState(VoidCallback fn) {
+    if (mounted) super.setState(fn);
+  }
+
   Pokemon get _p => widget.pokemon;
   String get _name => formDisplayName(_p.formName ?? _p.name, _p.speciesName);
   String get _costumeLabel => typeStyle(_costume).label;
@@ -173,7 +185,9 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
 
   // --------------------------------------------------------- movimientos
 
-  Future<void> _loadMoves({bool reroll = false}) async {
+  /// Carga los movimientos que de verdad sabría a nivel 50 en el juego más
+  /// reciente en el que aparece (ver [defaultMoveset]).
+  Future<void> _loadMoves() async {
     setState(() => _loadingMoves = true);
     final api = PokeApiService.instance;
     try {
@@ -181,36 +195,10 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
         var pool = _p.moves;
         if (pool.isEmpty && _p.isVariant) pool = (await api.getPokemon(_p.speciesId)).moves;
         _pool = pool;
+        _defaults = defaultMoveset(pool);
+        _version = pool.isEmpty ? '' : versionLabel(pool.first.version);
       }
-      final names = <String>{};
-      if (_pool.isEmpty) {
-        names.addAll(['tackle', 'growl']);
-      } else if (!reroll) {
-        // Los últimos que aprende por nivel (los más fuertes) y alguno de MT.
-        final byLevel = _pool.where((m) => m.method == LearnMethod.level).toList()
-          ..sort((a, b) => b.level.compareTo(a.level));
-        names.addAll(byLevel.take(9).map((m) => m.name));
-        final machines = _pool.where((m) => m.method == LearnMethod.machine).toList()..shuffle(_rand);
-        names.addAll(machines.take(4).map((m) => m.name));
-      } else {
-        final all = _pool.map((m) => m.name).toSet().toList()..shuffle(_rand);
-        names.addAll(all.take(10));
-      }
-      final infos = <MoveInfo>[];
-      await Future.wait(
-        names.map((n) async {
-          try {
-            infos.add(await api.getMove(n));
-          } catch (_) {}
-        }),
-      );
-      if (!mounted) return;
-      setState(() {
-        _moves = _chooseFour(infos, shuffle: reroll);
-        _loadingMoves = false;
-        _busy = _fainted;
-        if (_moves.isNotEmpty && !_fainted) _message = '¿Qué hará $_name?';
-      });
+      await _setMoves(_defaults.isEmpty ? const ['tackle'] : _defaults);
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -220,38 +208,52 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     }
   }
 
-  /// Tres de daño (de tipos distintos si se puede, los mejores primero) y
-  /// uno de estado, para que el combate tenga variedad.
-  List<MoveInfo> _chooseFour(List<MoveInfo> infos, {bool shuffle = false}) {
-    double score(MoveInfo m) =>
-        (m.power ?? 0) * (_p.types.contains(m.type) ? 1.5 : 1) * ((m.accuracy ?? 100) / 100);
-    final damaging = infos.where((m) => m.isDamaging).toList();
-    if (shuffle) {
-      damaging.shuffle(_rand);
-    } else {
-      damaging.sort((a, b) => score(b).compareTo(score(a)));
-    }
-    final status = infos
-        .where((m) => !m.isDamaging && (m.statChanges.isNotEmpty || m.ailment != null || m.healing > 0))
-        .toList()
-      ..shuffle(_rand);
+  /// Pone estos cuatro (o menos) en los botones, en ese orden.
+  Future<void> _setMoves(List<String> names) async {
+    final api = PokeApiService.instance;
+    final infos = await Future.wait(
+      names.map((n) => api.getMove(n).then<MoveInfo?>((m) => m, onError: (Object _) => null)),
+    );
+    if (!mounted) return;
+    final moves = infos.whereType<MoveInfo>().toList();
+    setState(() {
+      _moves = moves;
+      _loadingMoves = false;
+      _busy = _fainted;
+      _message = moves.isEmpty
+          ? 'No se pudieron cargar los movimientos. Revisa tu conexión.'
+          : _fainted
+          ? _message
+          : '¿Qué hará $_name?';
+    });
+  }
 
-    final picked = <MoveInfo>[];
-    final types = <String>{};
-    for (final m in damaging) {
-      if (picked.length == 3) break;
-      if (types.add(m.type)) picked.add(m);
-    }
-    for (final m in damaging) {
-      if (picked.length == 3) break;
-      if (!picked.contains(m)) picked.add(m);
-    }
-    if (status.isNotEmpty) picked.add(status.first);
-    for (final m in damaging) {
-      if (picked.length == 4) break;
-      if (!picked.contains(m)) picked.add(m);
-    }
-    return picked.take(4).toList();
+  /// Hoja para elegir otros movimientos, sólo entre los que aprende de verdad.
+  Future<void> _pickMoves() async {
+    if (_busy && !_fainted) return;
+    SoundService.instance.play(Sfx.sheetUp, volume: 0.45);
+    final names = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      constraints: const BoxConstraints(maxWidth: 640),
+      builder: (_) => _MovePicker(
+        pokemonName: _name,
+        pool: _pool,
+        selected: [for (final m in _moves) m.name],
+        defaults: _defaults,
+        version: _version,
+        accent: typeStyle(_p.primaryType).color,
+      ),
+    );
+    if (names == null || names.isEmpty || !mounted) return;
+    final same = names.length == _moves.length &&
+        [for (var i = 0; i < names.length; i++) names[i] == _moves[i].name].every((e) => e);
+    if (same) return;
+    setState(() => _loadingMoves = true);
+    SoundService.instance.play(Sfx.buff, volume: 0.45);
+    await _setMoves(names);
+    if (mounted && !_fainted) _say(_pickLine(kNewMoves));
   }
 
   // -------------------------------------------------------------- turnos
@@ -315,10 +317,17 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     final missed = targetsKaren && m.accuracy != null && _rand.nextInt(100) >= m.accuracy!;
     if (missed) {
       await _miss(m);
-    } else if (m.isDamaging) {
-      await _attack(m);
     } else {
-      await _statusMove(m);
+      switch (battleKindOf(m)) {
+        case BattleMoveKind.damage:
+          await _attack(m);
+        case BattleMoveKind.fixed || BattleMoveKind.halfHp || BattleMoveKind.ohko:
+          await _special(m);
+        case BattleMoveKind.reactive:
+          await _reactive(m);
+        case BattleMoveKind.status:
+          await _statusMove(m);
+      }
     }
     if (!mounted) return;
     if (_hp <= 0) return _knockOut();
@@ -341,10 +350,12 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     if (_fxPhysical) _lunge.forward(from: 0);
     _dodge.forward(from: 0);
     await _wait(300);
+    if (!mounted) return;
     SoundService.instance.play(Sfx.miss, volume: 0.5);
     _setMessage('¡Karen lo esquivó! El ataque falló.');
     _say(_pickLine(kMiss), move: m.label);
     await _wait(1300);
+    if (!mounted) return;
   }
 
   Future<void> _attack(MoveInfo m) async {
@@ -356,6 +367,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     if (physical) {
       _lunge.forward(from: 0);
       await _wait(180);
+      if (!mounted) return;
     }
     _fx.forward(from: 0);
     await _wait(physical ? 300 : 540);
@@ -367,6 +379,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       _setMessage('No afecta a Karen… (el tipo $_costumeLabel es inmune)');
       _say(_pickLine(kHitImmune), move: m.label);
       await _wait(1500);
+      if (!mounted) return;
       return;
     }
 
@@ -376,7 +389,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     final defStat = physical ? 'defense' : 'special-defense';
     final a = _stat(atkStat) * _stageMul(_pokeStages[atkStat] ?? 0);
     final d = _karenDefense * (crit ? 1 : _stageMul(_karenStages[defStat] ?? 0));
-    final raw = ((2 * _level / 5 + 2) * m.power! * a / d) / 50 + 2;
+    final raw = ((2 * _level / 5 + 2) * battlePowerOf(m) * a / d) / 50 + 2;
     final damage = math.max(1, (raw * stab * eff * (crit ? 1.5 : 1) * (0.85 + _rand.nextDouble() * 0.15)).round());
 
     setState(() => _hp = math.max(0, _hp - damage));
@@ -426,6 +439,64 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     }
   }
 
+  /// Daño fijo, mitad de PS o fulminante: no usan la fórmula de daño, pero
+  /// sí respetan las inmunidades de tipo, como en los juegos.
+  Future<void> _special(MoveInfo m) async {
+    final kind = battleKindOf(m);
+    _fxType = m.type;
+    _fxPhysical = m.damageClass == 'physical';
+    _fxFromKaren = false;
+    SoundService.instance.play(Sfx.whoosh, volume: 0.5);
+    if (_fxPhysical) {
+      _lunge.forward(from: 0);
+      await _wait(180);
+      if (!mounted) return;
+    }
+    _fx.forward(from: 0);
+    await _wait(_fxPhysical ? 300 : 540);
+    if (!mounted) return;
+
+    if (_effOf(m) == 0) {
+      SoundService.instance.play(Sfx.miss, volume: 0.4);
+      _setMessage('No afecta a Karen… (el tipo $_costumeLabel es inmune)');
+      _say(_pickLine(kHitImmune), move: m.label);
+      await _wait(1500);
+      if (!mounted) return;
+      return;
+    }
+    final damage = switch (kind) {
+      BattleMoveKind.ohko => _hp,
+      BattleMoveKind.halfHp => math.max(1, _hp ~/ 2),
+      _ => fixedDamageOf(m),
+    };
+    setState(() => _hp = math.max(0, _hp - damage));
+    _karenHit.forward(from: 0);
+    _shake.forward(from: 0);
+    SoundService.instance.play(kind == BattleMoveKind.ohko ? Sfx.hitSuper : Sfx.hit, volume: 0.6);
+    HapticFeedback.heavyImpact();
+    _popup('-$damage', kind == BattleMoveKind.ohko ? const Color(0xFFFF5252) : Colors.white);
+    await _wait(450);
+    if (!mounted) return;
+    _setMessage(switch (kind) {
+      BattleMoveKind.ohko => '¡Es un golpe fulminante!',
+      BattleMoveKind.halfHp => '¡Le quitó la mitad de sus PS! ($damage de daño)',
+      _ => 'Karen recibió $damage de daño fijo.',
+    });
+    _say(_pickLine(kind == BattleMoveKind.ohko ? kHitCrit : kHitNormal), move: m.label);
+    await _wait(1300);
+    if (!mounted) return;
+  }
+
+  /// Contraataque, Manto Espejo…: devuelven el daño recibido, y Karen no ha
+  /// hecho daño de verdad. En el juego fallarían igual.
+  Future<void> _reactive(MoveInfo m) async {
+    SoundService.instance.play(Sfx.miss, volume: 0.4);
+    _setMessage('¡Pero falló! ${m.label} sólo devuelve el daño recibido, y Karen no ha hecho daño.');
+    _say(_pickLine(kNothing), move: m.label);
+    await _wait(1600);
+    if (!mounted) return;
+  }
+
   Future<void> _statusMove(MoveInfo m) async {
     if (m.healing > 0 && m.targetsSelf) {
       _statDirection = 0;
@@ -435,6 +506,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       _setMessage('¡$_name recuperó salud!');
       _say(_pickLine(kHealed));
       await _wait(1500);
+      if (!mounted) return;
       return;
     }
     if (m.statChanges.isNotEmpty) {
@@ -444,6 +516,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
         _fxFromKaren = false;
         _fx.forward(from: 0);
         await _wait(500);
+        if (!mounted) return;
       }
       await _applyStats(m);
       return;
@@ -454,18 +527,23 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       _fxFromKaren = false;
       _fx.forward(from: 0);
       await _wait(550);
+      if (!mounted) return;
       if (_ailment != null) {
         _setMessage('No tuvo efecto: Karen ya tiene un problema de estado.');
         _say('¡Ya tengo bastante con lo que tengo, gracias!');
         await _wait(1300);
+        if (!mounted) return;
         return;
       }
       await _applyAilment(m.ailment!);
       return;
     }
     _setMessage('Pero no pasó nada…');
-    _say(_pickLine(kNothing), move: m.label);
+    // Algunos movimientos tienen su propia broma (Salpicadura, Transformación…).
+    final quips = kMoveQuips[m.name];
+    _say(_pickLine(quips ?? kNothing), move: m.label);
     await _wait(1400);
+    if (!mounted) return;
   }
 
   Future<void> _applyStats(MoveInfo m) async {
@@ -495,6 +573,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       _say(_pickLine(kStatDown), stat: (firstStat ?? '').toLowerCase());
     }
     await _wait(1500);
+    if (!mounted) return;
   }
 
   Future<void> _applyAilment(String ailment) async {
@@ -502,6 +581,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     if (lines == null) {
       _setMessage('Karen se siente rara…');
       await _wait(900);
+      if (!mounted) return;
       return;
     }
     setState(() {
@@ -520,6 +600,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     _setMessage(kAilmentMessage[ailment] ?? 'Karen se siente rara…');
     _say(_pickLine(lines));
     await _wait(1500);
+    if (!mounted) return;
   }
 
   Future<void> _endOfTurn() async {
@@ -533,10 +614,12 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     _setMessage(tick);
     if (_ailment == 'trap' && --_ailmentTurns <= 0) {
       await _wait(900);
+      if (!mounted) return;
       setState(() => _ailment = null);
       _setMessage('¡Karen se liberó!');
     }
     await _wait(1100);
+    if (!mounted) return;
   }
 
   Future<void> _karenTurn() async {
@@ -548,9 +631,11 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           setState(() => _ailment = null);
           _setMessage(kKarenWakes.first);
           await _wait(1100);
+          if (!mounted) return;
         } else {
           _setMessage(_pickLine(kKarenAsleep));
           await _wait(1300);
+          if (!mounted) return;
           return;
         }
       case 'freeze':
@@ -558,21 +643,25 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           setState(() => _ailment = null);
           _setMessage(kKarenThaws.first);
           await _wait(1100);
+          if (!mounted) return;
         } else {
           _setMessage(kKarenFrozen.first);
           await _wait(1300);
+          if (!mounted) return;
           return;
         }
       case 'paralysis':
         if (_rand.nextInt(4) == 0) {
           _setMessage(kKarenParalyzed.first);
           await _wait(1300);
+          if (!mounted) return;
           return;
         }
       case 'infatuation':
         if (_rand.nextBool()) {
           _setMessage('Karen está enamorada de $_name. ¡No se atreve a moverse!');
           await _wait(1300);
+          if (!mounted) return;
           return;
         }
       case 'confusion':
@@ -580,6 +669,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           setState(() => _ailment = null);
           _setMessage('¡Karen ya no está confundida!');
           await _wait(1000);
+          if (!mounted) return;
         } else if (_rand.nextInt(3) == 0) {
           final damage = math.max(1, _karenMaxHp ~/ 12);
           setState(() => _hp = math.max(0, _hp - damage));
@@ -588,6 +678,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           _popup('-$damage', const Color(0xFFFF80AB));
           _setMessage(kKarenHurtsSelf.first);
           await _wait(1300);
+          if (!mounted) return;
           if (_hp <= 0) return _knockOut();
           return;
         }
@@ -622,6 +713,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
         _fx.forward(from: 0);
         SoundService.instance.play(Sfx.whoosh, volume: 0.45);
         await _wait(520);
+        if (!mounted) return;
         _pokeHit.forward(from: 0);
         SoundService.instance.play(Sfx.hitWeak, volume: 0.4);
         _popup('0', Colors.white, onKaren: false);
@@ -634,6 +726,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     if (action == KarenAction.lowerAttack) {
       _setMessage('El ataque de $_name bajó un poco.');
       await _wait(900);
+      if (!mounted) return;
     }
   }
 
@@ -647,6 +740,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     });
     _faint.forward(from: 0);
     await _wait(500);
+    if (!mounted) return;
     _say(_pickLine(kFaint));
     if (mounted) setState(() => _busy = false);
   }
@@ -671,7 +765,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
 
   void _pickCostume() {
     if (_busy && !_fainted) return;
-    SoundService.instance.play(Sfx.tap, volume: 0.35);
+    SoundService.instance.play(Sfx.sheetUp, volume: 0.45);
     showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1230,7 +1324,10 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
                         child: _MoveButton(
                           move: m,
                           index: i,
-                          effectiveness: m.isDamaging ? _effOf(m) : null,
+                          effectiveness: battleKindOf(m) == BattleMoveKind.status ||
+                                  battleKindOf(m) == BattleMoveKind.reactive
+                              ? null
+                              : _effOf(m),
                           stab: _p.types.contains(m.type),
                           enabled: !_busy,
                           onTap: () => _use(m),
@@ -1241,20 +1338,39 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
               },
             ),
           const SizedBox(height: 8),
+          // Cada botón cede espacio si no cabe: en un teléfono angosto
+          // "Disfraz: Psíquico" y "Cambiar movimientos" juntos se desbordaban.
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              TextButton.icon(
-                onPressed: (_busy && !_fainted) ? null : _pickCostume,
-                style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                icon: const Icon(Icons.checkroom_rounded, size: 18),
-                label: Text('Disfraz: $_costumeLabel'),
+              Flexible(
+                child: TextButton.icon(
+                  onPressed: (_busy && !_fainted) ? null : _pickCostume,
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  icon: const Icon(Icons.checkroom_rounded, size: 18),
+                  label: Text(
+                    'Disfraz: $_costumeLabel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _busy || _loadingMoves || _pool.length <= 4 ? null : () => _loadMoves(reroll: true),
-                style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                icon: const Icon(Icons.shuffle_rounded, size: 18),
-                label: const Text('Otros movimientos'),
+              const SizedBox(width: 8),
+              Flexible(
+                child: TextButton.icon(
+                  onPressed: (_busy && !_fainted) ||
+                          _loadingMoves ||
+                          _pool.map((m) => m.name).toSet().length <= _moves.length
+                      ? null
+                      : _pickMoves,
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text(
+                    'Cambiar movimientos',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
             ],
           ),
@@ -1346,7 +1462,7 @@ class _MoveButton extends StatelessWidget {
                     ),
                     const Spacer(),
                     Text(
-                      move.isDamaging ? 'Pot. ${move.power}${stab ? ' · STAB' : ''}' : 'Estado',
+                      '${battleTagOf(move)}${stab && battleKindOf(move) == BattleMoveKind.damage ? ' · STAB' : ''}',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.9),
                         fontSize: 10.5,
@@ -1456,4 +1572,329 @@ class _DizzyStars extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Hoja para elegir hasta cuatro movimientos entre los que el Pokémon aprende
+/// de verdad en el juego (por nivel, MT, huevo o tutor). Nada inventado.
+class _MovePicker extends StatefulWidget {
+  final String pokemonName;
+  final List<PokemonMoveRef> pool;
+  final List<String> selected;
+  final List<String> defaults;
+  final String version;
+  final Color accent;
+
+  const _MovePicker({
+    required this.pokemonName,
+    required this.pool,
+    required this.selected,
+    required this.defaults,
+    required this.version,
+    required this.accent,
+  });
+
+  @override
+  State<_MovePicker> createState() => _MovePickerState();
+}
+
+class _MovePickerState extends State<_MovePicker> {
+  late final List<String> _picked = List.of(widget.selected);
+  LearnMethod? _method;
+  bool _full = false;
+
+  static const Map<LearnMethod, String> _methodLabels = {
+    LearnMethod.level: 'Por nivel',
+    LearnMethod.machine: 'MT',
+    LearnMethod.egg: 'Huevo',
+    LearnMethod.tutor: 'Tutor',
+    LearnMethod.other: 'Otros',
+  };
+
+  void _toggle(String name) {
+    setState(() {
+      _full = false;
+      if (_picked.remove(name)) {
+        SoundService.instance.play(Sfx.chipOff, volume: 0.38);
+        return;
+      }
+      if (_picked.length >= 4) {
+        // Como en el juego: para aprender uno nuevo hay que olvidar otro.
+        _full = true;
+        SoundService.instance.play(Sfx.error, volume: 0.35);
+        return;
+      }
+      _picked.add(name);
+      SoundService.instance.play(Sfx.chip, volume: 0.4);
+    });
+  }
+
+  void _resetToLevel() {
+    SoundService.instance.play(Sfx.chipOff, volume: 0.38);
+    setState(() {
+      _full = false;
+      _picked
+        ..clear()
+        ..addAll(widget.defaults);
+    });
+  }
+
+  /// Una fila por movimiento y forma de aprenderlo, sin repetir.
+  List<PokemonMoveRef> _rowsFor(LearnMethod method) {
+    final seen = <String>{};
+    final rows = widget.pool.where((r) => r.method == method).toList();
+    if (method == LearnMethod.level) {
+      rows.sort((a, b) => a.level.compareTo(b.level));
+    } else {
+      rows.sort((a, b) => a.name.compareTo(b.name));
+    }
+    return [
+      for (final r in rows)
+        if (seen.add(r.name)) r,
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final methods = [
+      for (final m in LearnMethod.values)
+        if (widget.pool.any((r) => r.method == m)) m,
+    ];
+    final method = methods.contains(_method) ? _method! : methods.first;
+    final rows = _rowsFor(method);
+    final height = MediaQuery.sizeOf(context).height;
+    final atDefaults = _picked.length == widget.defaults.length &&
+        _picked.every(widget.defaults.contains);
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: height * 0.86),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.ink.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 2),
+              child: Text(
+                'Movimientos de ${widget.pokemonName}',
+                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                widget.version.isEmpty
+                    ? 'Sólo los que aprende en los juegos. Elige hasta 4.'
+                    : 'Sólo los que aprende en Pokémon ${widget.version}. Elige hasta 4.',
+                style: const TextStyle(fontSize: 12.5, color: AppColors.muted, height: 1.4),
+              ),
+            ),
+            SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final m in methods)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text('${_methodLabels[m]} · ${_rowsFor(m).length}'),
+                        selected: m == method,
+                        showCheckmark: false,
+                        labelStyle: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: m == method ? Colors.white : AppColors.ink,
+                        ),
+                        selectedColor: widget.accent,
+                        backgroundColor: AppColors.background,
+                        side: BorderSide(color: m == method ? widget.accent : AppColors.line),
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (_) {
+                          SoundService.instance.play(Sfx.tab, volume: 0.38);
+                          setState(() => _method = m);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                itemCount: rows.length,
+                itemBuilder: (context, i) {
+                  final ref = rows[i];
+                  final slot = _picked.indexOf(ref.name);
+                  return _PickRow(
+                    key: ValueKey('${ref.method}-${ref.name}'),
+                    ref: ref,
+                    slot: slot < 0 ? null : slot + 1,
+                    overLevel: ref.method == LearnMethod.level && ref.level > kBattleLevel,
+                    accent: widget.accent,
+                    onTap: () => _toggle(ref.name),
+                  );
+                },
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              child: _full
+                  ? const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 2, 20, 0),
+                      child: Text(
+                        'Ya tiene 4 movimientos. Quita uno para que aprenda otro.',
+                        style: TextStyle(fontSize: 12.5, color: AppColors.pokeRedInk, fontWeight: FontWeight.w600),
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 20, 14),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: atDefaults || widget.defaults.isEmpty ? null : _resetToLevel,
+                    child: const Text('Los de nivel 50'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.pokeRed,
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                    ),
+                    onPressed: _picked.isEmpty ? null : () => Navigator.of(context).pop(List.of(_picked)),
+                    child: Text(
+                      'Usar estos (${_picked.length}/4)',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fila de la hoja: nombre en español, tipo, potencia y cómo lo aprende.
+class _PickRow extends StatelessWidget {
+  final PokemonMoveRef ref;
+  final int? slot;
+  final bool overLevel;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _PickRow({
+    super.key,
+    required this.ref,
+    required this.slot,
+    required this.overLevel,
+    required this.accent,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final picked = slot != null;
+    return FutureBuilder<MoveInfo>(
+      future: PokeApiService.instance.getMove(ref.name),
+      builder: (context, snap) {
+        final m = snap.data;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Material(
+            color: picked ? accent.withValues(alpha: 0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Row(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: 24,
+                      height: 24,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: picked ? accent : Colors.transparent,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: picked ? accent : AppColors.line, width: 1.6),
+                      ),
+                      child: picked
+                          ? Text(
+                              '$slot',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 46,
+                      child: Text(
+                        learnLabel(ref),
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          color: overLevel ? AppColors.muted : accent,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        m?.label ?? capitalize(ref.name),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    if (m != null) ...[
+                      TypeChip(type: m.type, onColor: false, compact: true),
+                      SizedBox(
+                        width: 40,
+                        child: Text(
+                          m.damageClass == 'status' ? '—' : '${m.power ?? 'var.'}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ] else if (snap.hasError)
+                      // Sin red: el nombre ya se ve; sólo falta el detalle.
+                      const SizedBox(width: 80)
+                    else
+                      const SizedBox(width: 80, child: LinearProgressIndicator(minHeight: 2)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

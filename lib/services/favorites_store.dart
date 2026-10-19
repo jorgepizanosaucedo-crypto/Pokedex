@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'prefs.dart';
 
 /// Equipo del entrenador: Pokémon marcados como favoritos, guardados en el
-/// dispositivo.
+/// dispositivo (y en la cuenta, con sesión iniciada).
 class FavoritesStore extends ChangeNotifier {
   FavoritesStore._();
   static final FavoritesStore instance = FavoritesStore._();
@@ -35,6 +35,17 @@ class FavoritesStore extends ChangeNotifier {
     notifyListeners();
     _persist();
     return added;
+  }
+
+  /// El equipo que llega de la cuenta en la nube. Sólo avisa si cambió.
+  void replaceAll(Iterable<int> ids) {
+    final next = ids.toSet();
+    if (setEquals(next, _ids)) return;
+    _ids
+      ..clear()
+      ..addAll(next);
+    notifyListeners();
+    _persist();
   }
 
   Future<void> clear() async {
