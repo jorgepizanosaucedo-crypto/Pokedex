@@ -64,6 +64,7 @@
 - Arte oficial y sprites animados de [PokeAPI/sprites](https://github.com/PokeAPI/sprites) (los animados son los de Pokémon Showdown).
 - En el navegador, los efectos de sonido van por Web Audio: se cargan una vez y suenan al instante, sin trabar el teléfono.
 - Música, efectos y la voz de Karen sintetizados para el proyecto con los scripts de [`tools/`](tools/).
+- Conectada a Firebase (proyecto `pokedex-jorge`): Authentication con correo y contraseña, y Cloud Firestore con reglas para que cada entrenador sólo lea y escriba sus datos ([`firestore.rules`](firestore.rules)). La configuración está en [`lib/firebase_options.dart`](lib/firebase_options.dart).
 
 Corresponde a la actividad de consumo de APIs: añadir Dio, hacer la petición de
 red, convertir la respuesta en objetos Dart y mostrarlos con Flutter.
@@ -272,6 +273,9 @@ un parpadeo de texto mientras se descarga.
 | `shared_preferences` | perfil y favoritos entre sesiones |
 | `image_picker` | foto de perfil |
 | `web` | Web Audio para los efectos en el navegador |
+| `firebase_core` | conexión con el proyecto de Firebase |
+| `firebase_auth` | cuentas de entrenador |
+| `cloud_firestore` | datos del entrenador en la nube |
 
 Los sonidos y la música de `assets/` no son de terceros: están sintetizados para este
 proyecto con los scripts de [`tools/`](tools/), y se regeneran con

@@ -1,6 +1,8 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/karen_controller.dart';
 import 'services/music_service.dart';
@@ -28,9 +30,26 @@ Future<void> main() async {
   // En web los efectos se bajan y decodifican ya, para que el primero suene
   // a tiempo (el de la apertura incluido).
   SoundService.instance.preload();
+  // Firebase arranca a la par que los ajustes, así no suma espera a la
+  // apertura.
+  final firebase = _initFirebase();
   // Música, efectos y Karen se guardan; se aplican antes del primer cuadro.
   await SettingsStore.instance.load();
+  await firebase;
   runApp(const PokedexApp());
+}
+
+/// Conecta con el proyecto de Firebase (cuentas y datos en la nube). Si falla,
+/// por ejemplo sin red, la Pokédex abre igual con lo guardado en el
+/// dispositivo.
+Future<void> _initFirebase() async {
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase no se pudo iniciar: $e');
+  }
 }
 
 class PokedexApp extends StatelessWidget {
